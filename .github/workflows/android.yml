@@ -82,14 +82,20 @@ jobs:
           path: FARR-Q-Charge-*.apk
           if-no-files-found: error
 
-      - name: Publish release (version tags only)
-        if: startsWith(github.ref, 'refs/tags/Ver_FarrQ_') && steps.key.outputs.signed == 'true'
+      - name: Publish release for this version
+        if: steps.key.outputs.signed == 'true' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/Ver_FarrQ_'))
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          NOTES="docs/${GITHUB_REF_NAME}-release-notes.md"
+          VER=$(sed -n 's/.*versionName = "\(.*\)".*/\1/p' app/build.gradle.kts)
+          APK="FARR-Q-Charge-${VER}.apk"
+          cp FARR-Q-Charge-*.apk "$APK" 2>/dev/null || true
+          NOTES="docs/${VER}-release-notes.md"
           if [ ! -f "$NOTES" ]; then NOTES="README.md"; fi
-          gh release create "$GITHUB_REF_NAME" "FARR-Q-Charge-${GITHUB_REF_NAME}.apk" \
-            --verify-tag --latest \
-            --title "FARR Q Charge ${GITHUB_REF_NAME}" \
-            --notes-file "$NOTES"
+          if gh release view "$VER" >/dev/null 2>&1; then
+            gh release upload "$VER" "$APK" --clobber
+            gh release edit "$VER" --notes-file "$NOTES" --latest
+          else
+            gh release create "$VER" "$APK" --target "$GITHUB_SHA" --latest \
+              --title "FARR Q Charge ${VER}" --notes-file "$NOTES"
+          fi

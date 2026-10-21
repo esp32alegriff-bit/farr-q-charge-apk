@@ -16,5 +16,5 @@
 ## Build a release
 
 - Push to `main`: Actions builds the APK (Actions tab → latest run → Artifacts).
-- Push a tag named `Ver_FarrQ_x.y`: Actions also publishes a GitHub Release with the APK.
+- Every signed push to `main` publishes (or refreshes) the GitHub Release named after `versionName` in `app/build.gradle.kts`.
 - Without the secret, Actions only builds a `TEST-ONLY` debug APK, which cannot update a released install.

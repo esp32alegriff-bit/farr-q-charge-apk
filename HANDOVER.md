@@ -70,7 +70,7 @@ Home Wi-Fi: `Farrusco` (2.4 GHz, must stay on channel 6) and `Farrusco_5G` (5 GH
 
 - One permanent signing key for every version (so updates install over the top and keep data). It is stored **encrypted** at `signing/farrq-release.jks.enc` (AES-256, PBKDF2 200 000 rounds); the password is the GitHub secret `FARRQ_SIGNING_PASS`. Alias `farrq`; store and key password are the same secret. The owner also holds an offline copy of the key and password.
 - Push to `main` → Actions builds the APK as an artifact (a TEST-ONLY debug APK if the secret is missing).
-- Push a tag `Ver_FarrQ_x.y` → Actions publishes a GitHub Release with `FARR-Q-Charge-Ver_FarrQ_x.y.apk`. Download page: https://github.com/esp32alegriff-bit/farr-q-charge-apk/releases/latest
+- Every signed push to `main` publishes (or refreshes) the GitHub Release named after `versionName`, with `FARR-Q-Charge-Ver_FarrQ_x.y.apk`. Bump the version before pushing a new release. Download page: https://github.com/esp32alegriff-bit/farr-q-charge-apk/releases/latest
 - For every new version: bump `versionCode` and `versionName` in `app/build.gradle.kts`, the header text in `index.html`, `APP_VERSION` in `Store.java`, and add `docs/Ver_FarrQ_x.y-release-notes.md`.
 
 ## 6. What comes next
