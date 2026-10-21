@@ -59,6 +59,45 @@ const say=m=>{try{toast(m);}catch(e){}};
 function b64e(o){return btoa(unescape(encodeURIComponent(JSON.stringify(o))));}
 function b64d(t){return JSON.parse(decodeURIComponent(escape(atob(t))));}
 
+/* ---------- 1.8: plain in-app dialogs (replace the browser boxes that showed the web address) ---------- */
+let dlgClose=null;
+const DLG_CSS=`
+#fdlg{position:fixed;inset:0;background:rgba(4,7,12,.72);display:none;align-items:center;justify-content:center;padding:20px;z-index:50}
+#fdlg.on{display:flex}
+#fdlg .box{width:100%;max-width:420px;background:var(--panel);border:1px solid var(--line);border-top-width:5px;border-radius:16px;padding:20px 20px 18px;box-shadow:0 12px 40px rgba(0,0,0,.55)}
+#fdlg .ttl{font-size:21px;font-weight:800;letter-spacing:.2px;color:var(--text);margin-bottom:10px;line-height:1.25}
+#fdlg .txt{font-size:15px;line-height:1.5;color:var(--muted);margin-bottom:20px}
+#fdlg .acts{display:flex;gap:10px}
+#fdlg .acts button{flex:1;padding:14px 10px;border-radius:12px;border:0;font-size:16px;font-weight:700;font-family:inherit;cursor:pointer}
+#fdlg .cancel{background:transparent;border:1px solid var(--line);color:var(--text)}
+#fdlg .ok-red{background:var(--red);color:#fff}
+#fdlg .ok-green{background:var(--green);color:#052e1c}
+#fdlg .ok-cyan{background:var(--cyan);color:#06222a}
+.btn.r-on{background:var(--green);border-color:var(--green);color:#052e1c;font-weight:700}
+.btn.r-off{background:var(--red);border-color:var(--red);color:#fff;font-weight:700}
+`;
+(function(){const s=document.createElement('style');s.textContent=DLG_CSS;document.head.appendChild(s);})();
+function askUser(o){
+  return new Promise(res=>{
+    const tone=o.tone||'red', col={red:'var(--red)',green:'var(--green)',cyan:'var(--cyan)'}[tone];
+    const w=document.createElement('div'); w.id='fdlg';
+    w.innerHTML=`<div class="box" role="dialog" aria-modal="true" style="border-top-color:${col}"><div class="ttl">${esc(o.title)}</div><div class="txt">${esc(o.text)}</div><div class="acts"><button class="cancel">Cancel</button><button class="ok-${tone}">${esc(o.ok)}</button></div></div>`;
+    document.body.appendChild(w);
+    const kd=e=>{if(e.key==='Escape')done(false);};
+    function done(v){
+      if(!dlgClose)return;
+      dlgClose=null; document.removeEventListener('keydown',kd); w.remove(); res(v);
+    }
+    dlgClose=done;
+    w.querySelector('.cancel').onclick=()=>done(false);
+    w.querySelector('.ok-'+tone).onclick=()=>done(true);
+    w.onclick=e=>{if(e.target===w)done(false);};
+    document.addEventListener('keydown',kd);
+    w.classList.add('on');
+    w.querySelector('.cancel').focus();
+  });
+}
+
 /* ---------- measured sessions (from the meter, kept on this phone) ---------- */
 let MS=[], MSdemo=[];
 function loadMS(){const s=sync('sessions');MS=(s&&s.sessions)||[];MSdemo=(s&&s.demo)||[];}
@@ -92,6 +131,7 @@ window.farrImportText=function(text){
 
 /* ---------- Android back button ---------- */
 window.farrBack=function(){
+  if(dlgClose){dlgClose(false);return true;}
   const on=document.querySelector('.screen.on'); const id=on?on.id.slice(2):'home';
   if(id==='home')return false;
   if(['meter','relay','alerts','conn','info'].includes(id))go('set');
@@ -130,6 +170,8 @@ function paintLive(){
   if(screen==='home')paintHomeCard();
   if(screen==='meter')paintMeter();
   if(screen==='relay')paintRelayAuto();
+  if(screen==='home')paintRelayAuto();
+  if(screen==='info'){const el=$('infoBody');if(el)el.innerHTML=infoHTML();}
 }
 
 /* ---------- Home card ---------- */
@@ -152,7 +194,7 @@ function paintHomeCard(){
      R('This session',se?n2(se.kwh,2)+' kWh · R'+n2(se.kwh*rate(),2)+' · '+dur(se.duration_s):'--')+
      R('Today',n2(v.today_kwh,2)+' kWh · R'+n2((v.today_kwh||0)*rate(),2))+
      R('Mode',esc(v.mode||'--'))+
-     R('EV relay',v.relay&&v.relay.reachable?(v.relay.relay2_on?'ON':'OFF'):'unknown')+
+     R('EV relay',RELAY&&RELAY.connected?(RELAY.relay2On?'ON':'OFF')+' (relay board)':v.relay&&v.relay.reachable?(v.relay.relay2_on?'ON':'OFF')+' (meter report)':'unknown')+
      `</div>`;
   el.innerHTML=h;
 }
@@ -188,7 +230,7 @@ function paintSessions(){
     :'<div class="small">No measured sessions yet.</div>';
 }
 async function pushMeter(obj,msgEl,okText){
-  try{const c=await call('meterConfigSet',obj);CFG=c||CFG;if(msgEl)$(msgEl).textContent=okText||'Saved to the meter.';say(okText||'Saved to the meter');paintModeChips();return true;}
+  try{const c=await call('meterConfigSet',obj);CFG=c||CFG;if(LIVE&&LIVE.live&&obj.mode)LIVE.live.mode=obj.mode;if(msgEl)$(msgEl).textContent=okText||'Saved to the meter.';say(okText||'Saved to the meter');paintModeChips();return true;}
   catch(e){const t='Could not reach the meter: '+e.message;if(msgEl)$(msgEl).textContent=t;say(t);return false;}
 }
 window.farrCalMatch=async function(){
@@ -212,28 +254,46 @@ window.farrThSave=function(){
 };
 
 /* ---------- Relays and AUTO ---------- */
+function setTxt(id,t){const x=$(id);if(x)x.textContent=t;}
 function paintModeChips(){
-  const m=(CFG&&CFG.mode)||(LIVE&&LIVE.live&&LIVE.live.mode)||'MANUAL';
-  if($('modeManual')){$('modeManual').classList.toggle('on',m==='MANUAL');$('modeAuto').classList.toggle('on',m==='AUTO');}
+  // 1.8: the meter's live mode wins, so a change made from another controller shows at once
+  const m=(LIVE&&LIVE.live&&LIVE.live.mode)||(CFG&&CFG.mode)||'MANUAL';
+  // 1.8: the same MANUAL/AUTO chips appear on Home and on the Relays page
+  [['modeManual','modeAuto'],['hModeManual','hModeAuto']].forEach(([a,b])=>{
+    const x=$(a),y=$(b);
+    if(x&&y){x.classList.toggle('on',m==='MANUAL');y.classList.toggle('on',m==='AUTO');}
+  });
 }
 function paintRelayAuto(){
   const v=LIVE&&LIVE.live;
   paintModeChips();
   const a=v&&v.auto;
-  $('autoState').textContent=!v?'Meter not connected, so AUTO cannot run yet.':
+  const t=!v?'Meter not connected, so AUTO cannot run yet.':
     v.mode!=='AUTO'?'MANUAL: the meter never switches anything.':
     'AUTO is '+(a&&a.state?a.state:'watching')+(a&&a.below_s?' · below the level for '+a.below_s+' s':'')+'.';
+  setTxt('autoState',t); setTxt('hAutoState',t);
+}
+/* 1.8: ON turns green when that relay is on, OFF turns red when it is off; grey when the board is not reachable */
+function paintRelayButtons(){
+  const r=RELAY, ok=!!(r&&r.connected);
+  document.querySelectorAll('[data-relay]').forEach(b=>{
+    const cur=ok?(b.dataset.relay==='1'?r.relay1On:r.relay2On):null, want=b.dataset.state==='on';
+    b.classList.toggle('r-on',ok&&cur===true&&want);
+    b.classList.toggle('r-off',ok&&cur===false&&!want);
+  });
 }
 function paintRelay(){
-  const r=RELAY;
-  $('rStatus').textContent=!r?'Checking…':r.connected?'Connected':'Not reachable';
+  const r=RELAY, status=!r?'Checking…':r.connected?'Connected':'Not reachable';
+  setTxt('rStatus',status); setTxt('hRStatus',status);
   $('rRows').innerHTML=r&&r.connected?
     R('Relay 1 · Eskom input',r.relay1On?'ON':'OFF')+R('Relay 2 · EV charger',r.relay2On?'ON':'OFF')+R('Relay says',esc(r.message||''))
     :`<div class="small">${esc((r&&r.message)||'')}</div>`;
+  paintRelayButtons();
+  if(screen==='home')paintHomeCard();
 }
 async function relayLoop(){
   clearTimeout(relayTimer);
-  if(screen!=='relay'||document.visibilityState!=='visible')return;
+  if(!(screen==='relay'||screen==='home')||document.visibilityState!=='visible')return;
   try{RELAY=await call('relayStatus');}catch(e){RELAY={connected:false,message:e.message};}
   paintRelay();
   relayTimer=setTimeout(relayLoop,3000);
@@ -242,16 +302,18 @@ async function relayCmd(path){
   try{RELAY=await call('relay',{path});paintRelay();say(RELAY.connected?'Done':'Relay did not answer: '+(RELAY.message||''));}
   catch(e){say('Relay did not answer: '+e.message);}
 }
-window.farrRelay=function(n,on){
-  if(n===1&&!on&&!confirm('Switch Relay 1 (Eskom input) OFF?'))return;
+window.farrRelay=async function(n,on){
+  if(n===1&&!on&&!await askUser({title:'Turn off Eskom input?',text:'This switches Relay 1 (Eskom input) off.',ok:'Turn off',tone:'red'}))return;
   relayCmd('/api/v1/relay/'+n+'/'+(on?'on':'off'));
 };
-window.farrCharge=function(start){
-  if(!confirm(start?'START CHARGING: Eskom ON, then EV ON?':'STOP CHARGING: EV OFF, then Eskom OFF?'))return;
-  relayCmd(start?'/api/v1/charge/start':'/api/v1/charge/stop');
+window.farrCharge=async function(start){
+  const ok=await askUser(start
+    ?{title:'Start charging?',text:'Eskom goes on first, then the EV charger. The relay board runs this order itself.',ok:'Start',tone:'green'}
+    :{title:'Stop charging?',text:'The EV charger goes off first, then Eskom. The relay board runs this order itself.',ok:'Stop',tone:'red'});
+  if(ok)relayCmd(start?'/api/v1/charge/start':'/api/v1/charge/stop');
 };
-window.farrMode=function(m){
-  if(m==='AUTO'&&!confirm('Switch to AUTO? The meter will switch the EV relay OFF when charging finishes.'))return;
+window.farrMode=async function(m){
+  if(m==='AUTO'&&!await askUser({title:'Turn on AUTO?',text:'The meter will switch the EV charger off when charging finishes. AUTO never switches anything on and never touches Eskom.',ok:'Turn on AUTO',tone:'cyan'}))return;
   pushMeter({mode:m},null,'Mode set to '+m);
 };
 window.farrAutoSave=function(){
@@ -279,7 +341,10 @@ function paintAlerts(){
   sync('alertsRead');
 }
 window.farrAlertType=(t,on)=>{sync('setAlertType',{type:t,off:!on});};
-window.farrClearAlerts=()=>{if(confirm('Clear the alert list on this phone?')){sync('clearAlerts');paintAlerts();}};
+window.farrClearAlerts=async function(){
+  if(!await askUser({title:'Clear the alert list?',text:'This clears the alert list on this phone only. The meter keeps its own records.',ok:'Clear',tone:'red'}))return;
+  sync('clearAlerts');paintAlerts();
+};
 window.farrSyncNow=async function(){say('Checking the meter…');try{const r=await call('sync');say(r.message||'Done');}catch(e){say(e.message);}loadMS();if(screen==='alerts')paintAlerts();};
 
 /* ---------- Connections ---------- */
@@ -288,11 +353,18 @@ function paintConn(){
   const c=sync('config')||{};
   $('cf_meter').value=c.meterUrl||'';$('cf_relay').value=c.relayUrl||'';$('cf_token').value=c.relayToken||'';
   $('cf_mqhost').value=c.mqttHost||'';$('cf_mqport').value=c.mqttPort||'';$('cf_mquser').value=c.mqttUser||'';$('cf_mqpass').value=c.mqttPass||'';
-  mqOn=!!c.mqttEnabled;paintMq();
+  mqOn=!!c.mqttEnabled;paintMq();paintMqStatus();
   $('connMsg').textContent=c.pendingMeter?'Waiting to send these to the meter when it is found.':'';
 }
 function paintMq(){$('mqOn').classList.toggle('on',mqOn);$('mqOff').classList.toggle('on',!mqOn);}
-window.farrMq=on=>{mqOn=on;paintMq();};
+/* 1.8: the Pi is optional; say so, and say what the meter reports */
+function paintMqStatus(){
+  const el=$('mqStatus'); if(!el)return;
+  const mq=LIVE&&LIVE.live&&LIVE.live.mqtt;
+  el.textContent='Pi/MQTT is OPTIONAL. The meter, relays and history never need it. '+
+    (!mqOn?'MQTT is off, so the Pi is not used.':mq&&mq.connected?'MQTT is on and the meter is connected to the broker.':'MQTT is on, but the meter is not connected to the broker yet.');
+}
+window.farrMq=on=>{mqOn=on;paintMq();paintMqStatus();};
 function addr(v){v=String(v||'').trim().replace(/\/+$/,'');if(v&&!/^https?:\/\//.test(v))v='http://'+v;return v;}
 window.farrConnSave=async function(){
   const o={meterUrl:addr($('cf_meter').value),relayUrl:addr($('cf_relay').value),relayToken:$('cf_token').value.trim(),
@@ -317,8 +389,10 @@ function paintDemo(){
   $('demoRelay').checked=!!c.demoRealRelay;
 }
 window.farrDemo=async function(on){
-  if(!on&&!confirm('Switch the demo meter off? Demo sessions and demo alerts are removed.'))return;
+  if(!on&&!await askUser({title:'Turn demo off?',text:'Demo sessions and demo alerts are removed from this phone. Your real history is not touched.',ok:'Turn demo off',tone:'red'}))return;
   try{await call('demo',{on});}catch(e){say(e.message);}
+  // 1.8: the demo relay switch is always off again once demo is turned off
+  if(!on)sync('setConfig',{demoRealRelay:false});
   paintDemo();say(on?'Demo meter on':'Demo meter off');LIVE=null;loadMS();renderInfo();
 };
 window.farrDemoRelay=on=>{sync('setConfig',{demoRealRelay:on});};
@@ -394,9 +468,22 @@ function infoData(){
   let s1={};try{s1={rateHome:S.rateHome,rateStation:S.rateStation,rateSolar:S.rateSolar,loss:S.loss,pack:S.pack,claim:S.claim,petrol:S.petrol,compare:S.compare,theme:S.theme,entries:E.length,firstEntry:E.length?tstamp(E[0].ts):'--',lastEntry:E.length?tstamp(E[E.length-1].ts):'--'};}catch(e){}
   return {app,st,c,al,s1};
 }
+/* 1.8: communications health, from what the meter and relay board report right now */
+function healthHTML(){
+  const L=LIVE&&LIVE.live?LIVE.live:null, RL=DIAG&&DIAG.relay, wf=L&&L.wifi, en=L&&L.espnow, mq=L&&L.mqtt;
+  const meter=LIVE&&LIVE.online?'Answering · last read '+ago(LIVE.lastSeen):(LIVE&&LIVE.everSeen?'Not answering · last seen '+ago(LIVE.lastSeen):'Not found yet');
+  return section('Communications, live'+(LIVE&&LIVE.demo?' (DEMO)':''),
+    R('Architecture','Meter: direct · Relay: direct · Pi/MQTT: optional')+
+    R('Meter, HTTP read',esc(meter))+
+    R('Wi-Fi signal to meter',wf?esc(wf.rssi)+' dBm · channel '+esc(wf.channel):'not reported yet')+
+    R('ESP-NOW to the displays',en?'sent '+esc(en.sent)+' · failed '+esc(en.fail):'not reported yet')+
+    R('Last ESP-NOW packet','not reported by the meter yet')+
+    R('MQTT to the Pi',mq?esc(mq.enabled?(mq.connected?'connected':'on, not connected'):'off'):'not reported yet')+
+    R('Relay board, direct',RL?(RL.connected?'reachable':'not reachable'):'checking…'));
+}
 function infoHTML(){
   const {app,st,c,al,s1}=infoData(), L=LIVE&&LIVE.live?LIVE.live:(st.lastLive||null), M=DIAG&&DIAG.meter, RL=DIAG&&DIAG.relay;
-  let h='';
+  let h=healthHTML();
   h+=section('App',kv(app)+R('Background check last ran',ago(st.lastPoll))+R('Last full sync with meter',ago(st.lastSync))+R('Meter last seen',ago(st.lastSeen))+
     R('Measured sessions on this phone',MS.length)+R('Alerts on this phone',(al.alerts||[]).length)+R('Notifications',st.notifAllowed?'allowed':'not allowed')+
     R('Checks while sleeping',st.batteryExempt?'allowed':'limited')+R('On Wi-Fi now',st.onWifi?'yes':'no')+R('Demo meter',c.demo?'ON':'off'));
@@ -425,12 +512,12 @@ window.farrShareDiag=function(){
 window.farrOnScreen=function(id){
   screen=id;
   clearTimeout(timer);clearTimeout(relayTimer);
-  if(id==='home'){paintHomeCard();tick();}
+  if(id==='home'){paintHomeCard();tick();relayLoop();}
   if(id==='meter'){paintMeter();paintSessions();loadMeterConfig();tick();}
   if(id==='relay'){RELAY=null;paintRelay();paintRelayAuto();loadMeterConfig();tick();relayLoop();}
   if(id==='alerts')paintAlerts();
-  if(id==='conn')paintConn();
-  if(id==='info')renderInfo();
+  if(id==='conn'){paintConn();tick();}
+  if(id==='info'){renderInfo();tick();}
   if(id==='set'){const a=sync('alerts');const u=a&&a.unread;const el=$('alertsRowSub');if(el)el.textContent=u?u+' new alert'+(u>1?'s':''):'Every alert, notifications and background checks';}
 };
 })();
