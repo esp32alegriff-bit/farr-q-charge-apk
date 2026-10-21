@@ -138,7 +138,8 @@ function paintHomeCard(){
   const L=LIVE, st=statusText(L), v=L&&L.live;
   const unread=(L&&L.unread)||0;
   let h='';
-  if(unread)h+=`<div class="card" style="border-color:var(--gold)" onclick="go('alerts')"><div class="small" style="color:var(--gold)">${unread} new alert${unread>1?'s':''}. Tap to open.</div></div>`;
+  const ma=$('meterAlert');
+  if(ma)ma.innerHTML=unread?`<div class="card" style="border-color:var(--gold)" onclick="go('alerts')"><div class="small" style="color:var(--gold)">${unread} new alert${unread>1?'s':''}. Tap to open.</div></div>`:'';
   if(!v){
     h+=`<div class="card" onclick="go('meter')"><div class="hdr-row"><div class="label">EV meter</div><div class="small">${esc(st)}</div></div>`+
        `<div class="small">${L&&L.everSeen?'The meter is not answering. Last seen '+ago(L.lastSeen)+'.':'Meter not found yet. It will show here once it is connected at 192.168.1.128.'}</div></div>`;
