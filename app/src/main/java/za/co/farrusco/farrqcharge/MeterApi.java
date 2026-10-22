@@ -8,7 +8,7 @@ import org.json.JSONObject;
 
 import java.io.IOException;
 
-/** The meter, as described in docs/meter-contract.md. HttpMeter talks to the ESP32-S3; DemoMeter fakes it on the phone. */
+/** The meter, as described in docs/meter-contract.md. HttpMeter talks to the ESP32-S3, ShellyMeter to a Shelly EM Gen3; DemoMeter fakes it on the phone. */
 abstract class MeterApi {
     abstract JSONObject live() throws IOException;
     abstract JSONObject sessionsAfter(long after) throws IOException;
@@ -22,7 +22,12 @@ abstract class MeterApi {
     static MeterApi get(Context c) {
         JSONObject cfg = Store.config(c);
         if (cfg.optBoolean("demo")) return new DemoMeter(c);
-        return new HttpMeter(Net.trimSlash(cfg.optString("meterUrl")));
+        String base = Net.trimSlash(cfg.optString("meterUrl"));
+        String type = cfg.optString("meterType", "auto");
+        if (type.equals("auto")) type = Store.getString(c, "kind:" + base, "");
+        if (type.equals("shelly")) return new ShellyMeter(c, base);
+        if (type.equals("esp32")) return new HttpMeter(base);
+        return new Detecting(c, base);
     }
 
     static JSONObject parse(String s) throws IOException {
@@ -42,6 +47,37 @@ abstract class MeterApi {
         JSONObject diag() throws IOException { return get("/api/v1/diag", 3000); }
         JSONObject mqttTest() throws IOException { return parse(Net.request("POST", base + "/api/v1/mqtt/test", "{}", null, 12000)); }
         boolean isDemo() { return false; }
+    }
+
+    /* ================= not yet known: ask the device what it is, once ================= */
+    /** Works out whether the address is a Shelly or the ESP32 meter, remembers it per address, then hands over. */
+    static final class Detecting extends MeterApi {
+        private final Context c; private final String base;
+        Detecting(Context c, String base) { this.c = c.getApplicationContext(); this.base = base; }
+        boolean isDemo() { return false; }
+
+        private MeterApi resolve() throws IOException {
+            String kind;
+            try {
+                JSONObject i = parse(Net.request("GET", base + "/rpc/Shelly.GetDeviceInfo", null, null, 2500));
+                kind = (i.has("gen") || i.has("app") || i.has("model")) ? "shelly" : "esp32";
+            } catch (Net.HttpError e) {
+                kind = e.code == 401 ? "shelly" : (e.code == 404 ? "esp32" : null);
+                if (kind == null) throw e;
+            } catch (IOException e) {
+                if (e.getMessage() != null && e.getMessage().startsWith("Meter sent something")) kind = "esp32";
+                else throw e;            // timeout or refused: the meter is simply not answering, ask again next time
+            }
+            Store.putString(c, "kind:" + base, kind);
+            return kind.equals("shelly") ? new ShellyMeter(c, base) : new HttpMeter(base);
+        }
+        JSONObject live() throws IOException { return resolve().live(); }
+        JSONObject sessionsAfter(long a) throws IOException { return resolve().sessionsAfter(a); }
+        JSONObject eventsAfter(long a) throws IOException { return resolve().eventsAfter(a); }
+        JSONObject getConfig() throws IOException { return resolve().getConfig(); }
+        JSONObject setConfig(JSONObject p) throws IOException { return resolve().setConfig(p); }
+        JSONObject diag() throws IOException { return resolve().diag(); }
+        JSONObject mqttTest() throws IOException { return resolve().mqttTest(); }
     }
 
     /* ================= demo meter ================= */
