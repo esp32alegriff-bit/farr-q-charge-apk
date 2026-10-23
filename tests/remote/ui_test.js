@@ -14,7 +14,7 @@ const path=require('path');
     if(m==='setConfig'){Object.assign(cfg,a);return JSON.stringify(cfg);}
     if(m==='sessions')return JSON.stringify({sessions:window.__sess||sess});
     return JSON.stringify({});},
-   call(id,m,a){window.__calls.push({m,a:JSON.parse(a)});setTimeout(()=>window.__farrCb(id,true,JSON.stringify({ok:true,message:'Sheet updated'})),10);},
+   call(id,m,a){window.__calls.push({m,a:JSON.parse(a)});setTimeout(()=>window.__farrCb(id,true,JSON.stringify({ok:true,message:'Sheet updated',readings:window.__remote||[]})),10);},
    shareText(){},shareFile(){}};
   localStorage.setItem('farrq.entries',JSON.stringify([
    {ts:T-3600e3,kind:'charge',odo:1000,pct:50,where:'Home'},
@@ -50,6 +50,43 @@ const path=require('path');
  ok(p&&p.readings.length===2&&p.trips.length===1&&p.sessions.length===1,'payload has readings, trip, session');
  ok(p&&!('token' in p),'JS never adds the password to the payload');
  ok((await pg.evaluate(()=>document.getElementById('rmMsg').textContent)).includes('Sheet updated'),'status shows result');
+
+ // ---- two-way sync: entries from the other phone
+ const ts0=await pg.evaluate(()=>E[0].ts), tN=await pg.evaluate(()=>E[E.length-1].ts);
+ await pg.evaluate(({ts0,tN})=>{window.__remote=[
+   {ts:tN+60000,kind:'trip',odo:1060,pct:35,where:'',carKm:140},
+   {ts:ts0+5,kind:'charge',odo:1005,pct:60,where:'',carKm:''},
+   {ts:ts0+7,kind:'start',odo:990,pct:100,where:'',carKm:''},
+   {ts:'x',kind:'trip',odo:1,pct:1}, {ts:tN+9,kind:'bogus',odo:1,pct:1}];},{ts0,tN});
+ const before=await pg.evaluate(()=>E.length);
+ await pg.evaluate(()=>farrRemoteSend());await pg.waitForTimeout(600);
+ const after=await pg.evaluate(()=>({n:E.length,t:E.some(e=>e.kind==='trip'&&e.odo===1060&&e.carKm===140),c:E.some(e=>e.kind==='charge'&&e.odo===1005&&e.unlogged),st:E.filter(e=>e.kind==='start').length,bad:E.some(e=>e.kind==='bogus')}));
+ ok(after.n===before+3,'three valid entries added, junk ignored ('+before+'->'+after.n+')');
+ ok(after.t&&after.c,'trip with car km and unlogged charge arrived');
+ ok(after.st===1,'starting point added because this phone had none');
+ ok((await pg.evaluate(()=>localStorage.getItem('farrq.entries'))).includes('1060'),'merged entries saved on this phone');
+ ok((await pg.evaluate(()=>document.getElementById('rmMsg').textContent)).includes('3 new from the other phone'),'status says what arrived');
+ // second send: nothing new, no loop
+ const calls1=await pg.evaluate(()=>window.__calls.length);
+ await pg.evaluate(()=>farrRemoteSend());await pg.waitForTimeout(600);
+ ok((await pg.evaluate(()=>E.length))===before+3,'second sync adds nothing');
+ ok((await pg.evaluate(()=>window.__calls.length))===calls1+1,'merge does not trigger extra sends');
+ // blank where filled from other phone
+ await pg.evaluate(({ts0})=>{window.__remote=[{ts:ts0+5,kind:'charge',odo:1005,pct:60,where:'Home',carKm:''}];},{ts0});
+ await pg.evaluate(()=>farrRemoteSend());await pg.waitForTimeout(600);
+ ok(await pg.evaluate(({ts0})=>{const e=E.find(x=>x.ts===ts0+5);return e&&e.where==='Home'&&!e.unlogged;},{ts0}),'unlogged charge gets Home from other phone');
+ // starting points: later ignored, earlier wins
+ await pg.evaluate(({ts0})=>{window.__remote=[{ts:ts0+99,kind:'start',odo:1,pct:1,where:'',carKm:''}];},{ts0});
+ await pg.evaluate(()=>farrRemoteSend());await pg.waitForTimeout(500);
+ ok(await pg.evaluate(({ts0})=>{const s=E.filter(e=>e.kind==='start');return s.length===1&&s[0].ts===ts0+7;},{ts0}),'later starting point ignored');
+ await pg.evaluate(({ts0})=>{window.__remote=[{ts:ts0+1,kind:'start',odo:900,pct:100,where:'',carKm:''}];},{ts0});
+ await pg.evaluate(()=>farrRemoteSend());await pg.waitForTimeout(500);
+ ok(await pg.evaluate(({ts0})=>{const s=E.filter(e=>e.kind==='start');return s.length===1&&s[0].ts===ts0+1;},{ts0}),'earlier starting point replaces ours');
+ // reset on this phone: older Sheet entries stay out
+ await pg.evaluate(()=>{document.getElementById('st_odo').value='5000';document.getElementById('st_pct').value='90';startFresh();});
+ await pg.evaluate(({ts0})=>{window.__remote=[{ts:ts0+5,kind:'charge',odo:1005,pct:60,where:'Home',carKm:''}];},{ts0});
+ await pg.evaluate(()=>farrRemoteSend());await pg.waitForTimeout(600);
+ ok((await pg.evaluate(()=>E.length))===1,'after Start fresh old Sheet entries are not brought back');
  // backup/diagnostics must not leak password
  const leak=await pg.evaluate(()=>{try{return JSON.stringify(window.farrInfoData?farrInfoData():'')}catch(e){return ''}});
  ok(!leak.includes('"pw"'),'diagnostics do not show the password');

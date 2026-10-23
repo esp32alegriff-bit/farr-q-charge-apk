@@ -532,25 +532,67 @@ window.farrAutoRows=function(src){
 };
 
 /* ---------- 1.10: view from anywhere (a copy of the log in the owner's own Google Sheet) ---------- */
-let rmTimer=null, rmLast=0, rmBusy=false;
+let rmTimer=null, rmLast=0, rmBusy=false, rmSaveOrig=null;
 function rmCfg(){const c=sync('config')||{};return c;}
 function rmOn(){const c=rmCfg();return !!(N&&c.remoteUrl&&c.remoteToken);}
 function rmPayload(){
   const real=[...E].sort((a,b)=>a.ts-b.ts), rows=derive();
   const s7=summ(rowsFor(7)), s30=summ(rowsFor(30)), L=lastState()||{};
   const sm=x=>({trips:x.trips,km:+x.km.toFixed(1),eff:x.eff==null?null:+x.eff.toFixed(2),charges:x.charges,wall:+x.wall.toFixed(2),cost:+x.cost.toFixed(2)});
-  return {kind:'app',sent:Date.now(),
+  return {kind:'app',wantReadings:true,sent:Date.now(),
     readings:real.map(e=>({ts:e.ts,kind:e.kind,odo:e.odo,pct:e.pct,where:e.where||'',carKm:e.carKm==null?'':e.carKm})),
     charges:rows.filter(r=>r.type==='charge').map(r=>({ts:r.ts,where:r.where||'Unlogged',pct:r.pct,stored:+r.stored.toFixed(2),wall:+r.wall.toFixed(2),cost:+r.cost.toFixed(2),measured:!!r.measured,auto:!!r.auto})),
     trips:rows.filter(r=>r.type==='trip').map(r=>({ts:r.ts,km:+r.km.toFixed(1),kwh:r.countEff?+r.used.toFixed(2):'',cons:r.countEff?+r.cons.toFixed(1):'',odo:r.odo,pct:r.pct})),
     summary:{last7:sm(s7),last30:sm(s30),lastReading:{ts:L.ts||0,odo:L.odo||0,pct:L.pct==null?0:L.pct}},
     sessions:(MS||[]).slice(-300)};
 }
+
+/* ---------- 2.1: entries typed on the other phone arrive here (and ours go there) ---------- */
+/* Rules: entries are matched by kind + time. Nothing is ever deleted or overwritten here.
+   A missing entry is added; a blank "where" or car km is filled in; only the earliest starting point is kept.
+   After "Start fresh" on this phone, older entries from the Sheet are ignored. */
+function rmMerge(rows){
+  const res={added:0,filled:0};
+  if(!rows||!rows.length||typeof E==='undefined')return res;
+  let epoch=0; try{epoch=+localStorage.getItem('farrq.rmEpoch')||0;}catch(e){}
+  const have=new Map(E.map(e=>[e.kind+'|'+e.ts,e]));
+  for(const r of rows){
+    const ts=+r.ts, odo=parseFloat(r.odo), pct=parseFloat(r.pct), kind=r.kind;
+    if(!ts||isNaN(odo)||isNaN(pct)||!(kind==='trip'||kind==='charge'||kind==='start'))continue;
+    if(ts<epoch)continue;
+    if(kind==='start'&&E.some(x=>x.kind==='start'&&x.ts<=ts&&!(x.kind+'|'+x.ts===kind+'|'+ts)))continue;   // keep only the earliest starting point
+    const where=r.where?String(r.where):'', car=(r.carKm===''||r.carKm==null)?null:parseFloat(r.carKm);
+    const loc=have.get(kind+'|'+ts);
+    if(!loc){
+      const e={kind,ts,odo,pct};
+      if(kind==='charge'){if(where)e.where=where;else e.unlogged=true;}
+      if(car!=null&&!isNaN(car))e.carKm=car;
+      E.push(e);have.set(kind+'|'+ts,e);res.added++;
+    }else{
+      if(kind==='charge'&&!loc.where&&where){loc.where=where;delete loc.unlogged;res.filled++;}
+      if(loc.carKm==null&&car!=null&&!isNaN(car)){loc.carKm=car;res.filled++;}
+    }
+  }
+  const starts=E.filter(e=>e.kind==='start').sort((a,b)=>a.ts-b.ts);
+  for(let i=1;i<starts.length;i++){E.splice(E.indexOf(starts[i]),1);res.filled++;}
+  if(res.added||res.filled){
+    E.sort((a,b)=>a.ts-b.ts);
+    (rmSaveOrig||window.save)();
+    try{renderAll();}catch(e){}
+  }
+  return res;
+}
+window.farrRmMerge=rmMerge;
 async function rmSend(manual){
   if(!rmOn()){if(manual)setRm('Enter the web address and password first, then Save.');return;}
   if(rmBusy)return; rmBusy=true;
   if(manual)setRm('Sending…');
-  try{const r=await call('remotePush',rmPayload());rmLast=Date.now();setRm('Sent: '+(r.message||'ok'));}
+  try{
+    const r=await call('remotePush',rmPayload());rmLast=Date.now();
+    let note='';
+    try{const m=rmMerge(r.readings);if(m.added||m.filled)note=' · '+m.added+' new from the other phone'+(m.filled?', '+m.filled+' filled in':'');if(m.added||m.filled)say('Updated from the other phone');}catch(e){note=' · could not read the other phone ('+e.message+')';}
+    setRm('Synced '+ago(Date.now()).replace('0 s ago','just now')+': '+(r.message||'ok')+note);
+  }
   catch(e){setRm('Not sent: '+e.message);}
   rmBusy=false;
 }
@@ -569,10 +611,21 @@ window.farrRemoteSave=function(){
 };
 window.farrRemoteSend=function(){rmSend(true);};
 window.addEventListener('load',()=>{
-  // copy to the Sheet a few seconds after any log is saved, when the app opens, and when it comes back to the front
-  try{const _save=window.save; if(typeof _save==='function')window.save=function(){const r=_save.apply(this,arguments);rmSoon(4000);return r;};}catch(e){}
-  setTimeout(()=>rmSoon(500),8000);
-  document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&Date.now()-rmLast>120000)rmSoon(3000);});
+  // copy to the Sheet a few seconds after any log is saved, when the app opens, when it comes to the front, and every 90 s while it is open
+  try{
+    rmSaveOrig=window.save;
+    if(typeof rmSaveOrig==='function')window.save=function(){const r=rmSaveOrig.apply(this,arguments);rmSoon(4000);return r;};
+    const _sf=window.startFresh;
+    if(typeof _sf==='function')window.startFresh=function(){
+      const before=E.length;
+      const r=_sf.apply(this,arguments);
+      if(E.length===1&&before>1){try{localStorage.setItem('farrq.rmEpoch',String(Date.now()-1000));}catch(e){}}
+      return r;
+    };
+  }catch(e){}
+  setTimeout(()=>rmSoon(500),6000);
+  setInterval(()=>{if(document.visibilityState==='visible'&&Date.now()-rmLast>85000)rmSoon(500);},30000);
+  document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&Date.now()-rmLast>30000)rmSoon(1500);});
 });
 
 /* ---------- screen changes (called from go()) ---------- */

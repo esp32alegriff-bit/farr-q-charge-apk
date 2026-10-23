@@ -15,7 +15,9 @@
  6. In FARR Q Charge: Connections > View from anywhere.
     Paste the address, type the same password, type the phone's name, tap Save and send now.
  7. Do steps 5-6 on the second phone too (same address, same password, other name).
- 8. Abroad: open the Google Sheets app, sign in with the same Google account, open "FARR Q Charge log".
+ 8. Both phones now also READ the log back from this Sheet, so odometer, battery %, Anytime log and Charge log entries
+    from one phone appear on the other within about 1-2 minutes while the app is open (and when it is opened).
+ 9. Abroad: open the Google Sheets app, sign in with the same Google account, open "FARR Q Charge log".
 
  Safe to know:
  - Only someone with the address AND the password can add data. Nobody can read the Sheet unless you share it.
@@ -29,7 +31,7 @@ var PASSWORD = 'CHANGE-ME';
 var TABS = {
   charges:  {name: 'Charge log',     head: ['When', 'Where', 'Battery %', 'Stored kWh', 'Wall kWh', 'Cost R', 'Measured', 'Auto (no charge log)', 'Phone', 'Updated'], key: [0, 1]},
   trips:    {name: 'Trips',          head: ['When', 'Km', 'kWh used', 'kWh/100km', 'Odometer', 'Battery %', 'Phone', 'Updated'], key: [0]},
-  readings: {name: 'Readings',       head: ['When', 'Type', 'Odometer', 'Battery %', 'Where', 'Car km', 'Phone', 'Updated'], key: [0, 1]},
+  readings: {name: 'Readings',       head: ['When', 'Type', 'Odometer', 'Battery %', 'Where', 'Car km', 'Phone', 'Updated'], key: [0, 1], fillBlanksOnly: true},
   sessions: {name: 'Meter sessions', head: ['Started', 'Ended', 'kWh', 'Minutes', 'Peak W', 'Why it ended', 'Updated'], key: [0]}
 };
 
@@ -60,7 +62,9 @@ function doPost(e) {
       }));
     }
     if (p.kind === 'meter' && p.live) live_(ss, p.live, now);
-    return out_(true, 'Sheet updated (' + n + ' rows checked)');
+    var extra = {};
+    if (p.kind === 'app' && p.wantReadings) extra.readings = readings_(ss);
+    return out_(true, 'Sheet updated (' + n + ' rows checked)', extra);
   } catch (err) {
     return out_(false, 'Script error: ' + err);
   } finally {
@@ -70,8 +74,23 @@ function doPost(e) {
 
 function doGet() { return out_(true, 'FARR Q Charge sheet is running. Use the app to send data.'); }
 
-function out_(ok, msg) {
-  return ContentService.createTextOutput(JSON.stringify({ok: ok, message: msg})).setMimeType(ContentService.MimeType.JSON);
+function out_(ok, msg, extra) {
+  var o = {ok: ok, message: msg};
+  if (extra) for (var k in extra) o[k] = extra[k];
+  return ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON);
+}
+
+/* every logged reading, so the other phone can add the ones it does not have */
+function readings_(ss) {
+  var sh = ss.getSheetByName(TABS.readings.name), list = [];
+  if (!sh || sh.getLastRow() < 2) return list;
+  var data = sh.getRange(2, 1, sh.getLastRow() - 1, 8).getValues();
+  for (var i = 0; i < data.length; i++) {
+    var d = data[i], t = d[0] instanceof Date ? d[0].getTime() : 0;
+    if (!t || !d[1]) continue;
+    list.push({ts: t, kind: String(d[1]), odo: d[2], pct: d[3], where: d[4] === '' ? '' : String(d[4]), carKm: d[5], phone: String(d[6])});
+  }
+  return list;
 }
 
 function d_(ms) { return ms ? new Date(+ms) : ''; }
@@ -105,8 +124,16 @@ function upsert_(ss, tab, rows) {
   var add = [];
   rows.forEach(function (r) {
     var k = keyOf_(r, tab.key);
-    if (where[k]) sh.getRange(where[k], 1, 1, r.length).setValues([r]);
-    else { add.push(r); where[k] = -1; }
+    if (where[k] > 0) {
+      var rng = sh.getRange(where[k], 1, 1, r.length);
+      if (tab.fillBlanksOnly) {
+        // an existing entry is never changed, only blank cells (Where, Car km) are filled in
+        var old = rng.getValues()[0], mixed = old.slice(), changed = false;
+        for (var c = 0; c < r.length - 2; c++) if ((old[c] === '' || old[c] === null) && r[c] !== '' && r[c] !== null) { mixed[c] = r[c]; changed = true; }
+        if (changed) { mixed[r.length - 1] = r[r.length - 1]; rng.setValues([mixed]); }
+      } else rng.setValues([r]);
+    }
+    else if (!where[k]) { add.push(r); where[k] = -1; }
   });
   if (add.length) {
     sh.getRange(sh.getLastRow() + 1, 1, add.length, tab.head.length).setValues(add);

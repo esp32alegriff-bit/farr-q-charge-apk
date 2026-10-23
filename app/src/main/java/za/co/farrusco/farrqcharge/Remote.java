@@ -48,6 +48,7 @@ final class Remote {
             Store.mergeConfigQuiet(c, st);
             if (!ok) throw new IOException(msg);
             out.put("ok", true); out.put("message", msg);
+            if (r.has("readings")) out.put("readings", r.get("readings"));   // the other phone's entries, merged by the app screens
         } catch (JSONException e) {
             throw new IOException("Could not prepare the data to send");
         }

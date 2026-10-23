@@ -37,4 +37,20 @@ ok(sheets['Meter sessions'].rows.length===3,'meter push adds a real session, ski
 ok(sheets['Summary'].rows[0][3]==='EV METER (last check)','live block written next to summary');
 ok(sheets['Summary'].rows[0][0]==='FARR Q Charge summary','summary heading kept');
 ok(post({token:'pw1',kind:'app',charges:'oops'}).ok===false||true,'bad data does not crash');
+
+// ---- two-way: readings come back, nothing is overwritten, blanks are filled
+const T2=T+5e6;const R1=(ts,kind,odo,pct,where,car)=>({ts,kind,odo,pct,where,carKm:car});
+const rd=(ph,list)=>post({token:'pw1',kind:'app',wantReadings:true,phone:ph,readings:list});
+let a=rd('Antonio',[R1(T2,'start',100,100,'',''),R1(T2+10,'charge',110,90,'',''),R1(T2+20,'trip',120,80,'','')]);
+ok(a.ok&&a.readings.length===4,'Antonio push returns his entries plus earlier ones');
+let b=rd('Estelle',[R1(T2+30,'trip',130,70,'',380),R1(T2+10,'charge',110,90,'Home',390)]);
+ok(b.readings.length===5,'Estelle gets Antonio entries plus her own');
+const c10=b.readings.find(x=>x.ts===T2+10);
+ok(c10.where==='Home'&&c10.carKm===390,'blank where and car km filled in by the other phone');
+let a2=rd('Antonio',[R1(T2+10,'charge',110,90,'Station',400)]);
+const c10b=a2.readings.find(x=>x.ts===T2+10);
+ok(c10b.where==='Home'&&c10b.carKm===390,'existing values are never overwritten');
+ok(a2.readings.length===5&&a2.readings.some(x=>x.ts===T2+30&&x.phone==='Estelle'),'Antonio now receives Estelle entry');
+ok(rd('Antonio',[R1(T2,'start',100,100,'','')]).readings.length===5,'repeat send adds nothing');
+
 console.log(fail?'FAILED '+fail:'ALL PASS');process.exit(fail?1:0);
