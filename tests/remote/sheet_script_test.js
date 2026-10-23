@@ -3,7 +3,7 @@ const fs=require('fs'),vm=require('vm'),path=require('path');
 const src=fs.readFileSync(path.join(__dirname,'../../docs/remote-viewing-google-sheet.gs'),'utf8').replace("'CHANGE-ME'","'pw1'");
 function mkSheet(name){const rows=[];const sh={name,rows,
  appendRow(r){rows.push(r.slice());},setFrozenRows(){},setColumnWidth(){},clear(){rows.length=0;},
- getLastRow(){return rows.length;},
+ getLastRow(){return rows.length;},deleteRow(n){rows.splice(n-1,1);},
  getRange(r,c,nr,nc){nr=nr||1;nc=nc||1;if(typeof r==='string')return {setFontWeight(){return this;}};
   return {setFontWeight(){return this;},
    getValues(){return rows.slice(r-1,r-1+nr).map(x=>{const o=[];for(let i=0;i<nc;i++)o.push(x[c-1+i]===undefined?'':x[c-1+i]);return o;});},
@@ -53,4 +53,11 @@ ok(c10b.where==='Home'&&c10b.carKm===390,'existing values are never overwritten'
 ok(a2.readings.length===5&&a2.readings.some(x=>x.ts===T2+30&&x.phone==='Estelle'),'Antonio now receives Estelle entry');
 ok(rd('Antonio',[R1(T2,'start',100,100,'','')]).readings.length===5,'repeat send adds nothing');
 
+// ---- AUTO rows removed once a real charge log covers them
+const T3=T+9e6;
+post({token:'pw1',kind:'app',phone:'Antonio',charges:[{ts:T3,where:'Home',pct:70,stored:5,wall:5.5,cost:21,measured:true,auto:true},{ts:T3+5,where:'Home',pct:90,stored:5,wall:5.5,cost:21,measured:true,auto:false}]});
+const nBefore=sheets['Charge log'].rows.length;
+post({token:'pw1',kind:'app',phone:'Antonio',autoRemove:[T3,T3+5],charges:[]});
+ok(sheets['Charge log'].rows.length===nBefore-1,'only the AUTO row is removed, the real charge stays');
+ok(!sheets['Charge log'].rows.some(r=>r[0] instanceof Date&&r[0].getTime()===T3),'AUTO row gone from Sheet');
 console.log(fail?'FAILED '+fail:'ALL PASS');process.exit(fail?1:0);

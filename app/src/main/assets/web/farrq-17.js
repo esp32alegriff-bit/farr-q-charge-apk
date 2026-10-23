@@ -532,14 +532,23 @@ window.farrAutoRows=function(src){
 };
 
 /* ---------- 1.10: view from anywhere (a copy of the log in the owner's own Google Sheet) ---------- */
-let rmTimer=null, rmLast=0, rmBusy=false, rmSaveOrig=null;
+let rmTimer=null, rmLast=0, rmBusy=false, rmSaveOrig=null, rmPending=null;
 function rmCfg(){const c=sync('config')||{};return c;}
 function rmOn(){const c=rmCfg();return !!(N&&c.remoteUrl&&c.remoteToken);}
+function rmAutoKeys(rows){return rows.filter(r=>r.type==='charge'&&r.auto).map(r=>r.ts);}
+function rmGone(rows){
+  /* AUTO rows sent earlier that no longer exist because a real charge log now covers them (the phone still has the session, so it is not just unknown) */
+  let sent=[];try{sent=JSON.parse(localStorage.getItem('farrq.rmAuto')||'[]');}catch(e){}
+  const now=new Set(rmAutoKeys(rows)), have=new Set((MS||[]).map(x=>x.end_ms));
+  return sent.filter(t=>!now.has(t)&&have.has(t));
+}
 function rmPayload(){
   const real=[...E].sort((a,b)=>a.ts-b.ts), rows=derive();
   const s7=summ(rowsFor(7)), s30=summ(rowsFor(30)), L=lastState()||{};
   const sm=x=>({trips:x.trips,km:+x.km.toFixed(1),eff:x.eff==null?null:+x.eff.toFixed(2),charges:x.charges,wall:+x.wall.toFixed(2),cost:+x.cost.toFixed(2)});
-  return {kind:'app',wantReadings:true,sent:Date.now(),
+  const autoRemove=rmGone(rows);
+  rmPending={sent:rmAutoKeys(rows),gone:autoRemove};
+  return {kind:'app',wantReadings:true,autoRemove,sent:Date.now(),
     readings:real.map(e=>({ts:e.ts,kind:e.kind,odo:e.odo,pct:e.pct,where:e.where||'',carKm:e.carKm==null?'':e.carKm})),
     charges:rows.filter(r=>r.type==='charge').map(r=>({ts:r.ts,where:r.where||'Unlogged',pct:r.pct,stored:+r.stored.toFixed(2),wall:+r.wall.toFixed(2),cost:+r.cost.toFixed(2),measured:!!r.measured,auto:!!r.auto})),
     trips:rows.filter(r=>r.type==='trip').map(r=>({ts:r.ts,km:+r.km.toFixed(1),kwh:r.countEff?+r.used.toFixed(2):'',cons:r.countEff?+r.cons.toFixed(1):'',odo:r.odo,pct:r.pct})),
@@ -588,7 +597,8 @@ async function rmSend(manual){
   if(rmBusy)return; rmBusy=true;
   if(manual)setRm('Sending…');
   try{
-    const r=await call('remotePush',rmPayload());rmLast=Date.now();
+    const pl=rmPayload();const r=await call('remotePush',pl);rmLast=Date.now();
+    try{if(rmPending){const old=JSON.parse(localStorage.getItem('farrq.rmAuto')||'[]').filter(t=>!rmPending.gone.includes(t));localStorage.setItem('farrq.rmAuto',JSON.stringify([...new Set(old.concat(rmPending.sent))].slice(-500)));}}catch(e){}
     let note='';
     try{const m=rmMerge(r.readings);if(m.added||m.filled)note=' · '+m.added+' new from the other phone'+(m.filled?', '+m.filled+' filled in':'');if(m.added||m.filled)say('Updated from the other phone');}catch(e){note=' · could not read the other phone ('+e.message+')';}
     setRm('Synced '+ago(Date.now()).replace('0 s ago','just now')+': '+(r.message||'ok')+note);

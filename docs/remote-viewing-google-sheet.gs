@@ -54,6 +54,7 @@ function doPost(e) {
       n += upsert_(ss, TABS.readings, (p.readings || []).map(function (r) {
         return [d_(r.ts), r.kind, r.odo, r.pct, r.where, r.carKm, phone, now];
       }));
+      if (p.autoRemove && p.autoRemove.length) removeAuto_(ss, p.autoRemove);
       summary_(ss, p, phone, now);
     }
     if (p.sessions && p.sessions.length) {
@@ -140,6 +141,19 @@ function upsert_(ss, tab, rows) {
     sh.getRange(2, 1, sh.getLastRow() - 1, tab.head.length).sort({column: 1, ascending: false});
   }
   return rows.length;
+}
+
+/* an AUTO charge row is removed once a real charge log covers it, so the Sheet matches the app */
+function removeAuto_(ss, times) {
+  var sh = ss.getSheetByName(TABS.charges.name);
+  if (!sh || sh.getLastRow() < 2) return;
+  var kill = {};
+  times.forEach(function (t) { kill[+t] = true; });
+  var data = sh.getRange(2, 1, sh.getLastRow() - 1, TABS.charges.head.length).getValues();
+  for (var i = data.length - 1; i >= 0; i--) {
+    var d = data[i];
+    if (d[7] === 'yes' && d[0] instanceof Date && kill[d[0].getTime()]) sh.deleteRow(i + 2);
+  }
 }
 
 function summary_(ss, p, phone, now) {

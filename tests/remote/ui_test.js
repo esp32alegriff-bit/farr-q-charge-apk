@@ -82,6 +82,17 @@ const path=require('path');
  await pg.evaluate(({ts0})=>{window.__remote=[{ts:ts0+1,kind:'start',odo:900,pct:100,where:'',carKm:''}];},{ts0});
  await pg.evaluate(()=>farrRemoteSend());await pg.waitForTimeout(500);
  ok(await pg.evaluate(({ts0})=>{const s=E.filter(e=>e.kind==='start');return s.length===1&&s[0].ts===ts0+1;},{ts0}),'earlier starting point replaces ours');
+ // AUTO row superseded by a real charge log is reported for removal
+ await pg.evaluate(()=>{window.__remote=[];});
+ await pg.evaluate(()=>{E.length=0;E.push({ts:Date.now()-9*3600e3,kind:'charge',odo:1000,pct:50,where:'Home'},{ts:Date.now()-6*3600e3,kind:'trip',odo:1040,pct:40});save();});
+ await pg.evaluate(()=>farrRemoteSend());await pg.waitForTimeout(600);
+ const withAuto=await pg.evaluate(()=>window.__calls.filter(c=>c.m==='remotePush').pop().a);
+ ok(withAuto.charges.some(x=>x.auto)&&withAuto.autoRemove.length===0,'AUTO row sent, nothing to remove yet');
+ await pg.evaluate(()=>{E.push({ts:Date.now()-1000,kind:'charge',odo:1040,pct:80,where:'Home'});});
+ const nc=await pg.evaluate(()=>window.__calls.length);
+ await pg.evaluate(()=>farrRemoteSend());await pg.waitForTimeout(600);
+ const after2=await pg.evaluate((nc)=>window.__calls.slice(nc).find(c=>c.m==='remotePush').a,nc);
+ ok(!after2.charges.some(x=>x.auto)&&after2.autoRemove.length===1,'real charge log replaces AUTO row and Sheet is told to remove it');
  // reset on this phone: older Sheet entries stay out
  await pg.evaluate(()=>{document.getElementById('st_odo').value='5000';document.getElementById('st_pct').value='90';startFresh();});
  await pg.evaluate(({ts0})=>{window.__remote=[{ts:ts0+5,kind:'charge',odo:1005,pct:60,where:'Home',carKm:''}];},{ts0});
