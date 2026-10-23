@@ -99,7 +99,7 @@ const path=require('path');
  await pg.evaluate(()=>farrRemoteSend());await pg.waitForTimeout(600);
  ok((await pg.evaluate(()=>E.length))===1,'after Start fresh old Sheet entries are not brought back');
  // versions shown
- ok((await pg.evaluate(()=>document.getElementById('rmMsg').textContent)).includes('App Ver_FarrQ_2.1.2')&&(await pg.evaluate(()=>document.getElementById('rmMsg').textContent)).includes('matches'),'status shows app version and matching sheet script');
+ ok((await pg.evaluate(()=>document.getElementById('rmMsg').textContent)).includes('App Ver_FarrQ_2.1.3')&&(await pg.evaluate(()=>document.getElementById('rmMsg').textContent)).includes('matches'),'status shows app version and matching sheet script');
  await pg.evaluate(()=>{window.__script='2.0';});await pg.evaluate(()=>farrRemoteSend());await pg.waitForTimeout(500);
  ok((await pg.evaluate(()=>document.getElementById('rmMsg').textContent)).includes('paste the new script'),'old script version is flagged');
  await pg.evaluate(()=>{window.__script=null;});await pg.evaluate(()=>farrRemoteSend());await pg.waitForTimeout(500);

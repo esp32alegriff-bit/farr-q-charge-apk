@@ -5,7 +5,7 @@
 (function(){
 'use strict';
 const N=window.FarrNative||null;
-window.FARR_VER='Ver_FarrQ_2.1.2';
+window.FARR_VER='Ver_FarrQ_2.1.3';
 window.FARR_APP_URL='https://github.com/esp32alegriff-bit/farr-q-charge-apk/releases/latest';
 
 /* ---------- bridge ---------- */
