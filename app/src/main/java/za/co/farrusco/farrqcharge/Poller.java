@@ -143,7 +143,9 @@ final class Poller {
                 if (!res.optBoolean("more")) break;
             }
             newEvents = fresh.length();
-            boolean notifyEach = !firstContact && newEvents <= 5;
+            int visible = 0;                      // alerts the owner has not switched off
+            for (int i = 0; i < fresh.length(); i++) if (!Alerts.isOff(c, fresh.optJSONObject(i).optString("type"))) visible++;
+            boolean notifyEach = !firstContact && visible <= 5;
             for (int i = 0; i < fresh.length(); i++) {
                 JSONObject e = fresh.optJSONObject(i);
                 Alerts.add(c, e.optString("type"), e.optString("level", "info"), e.optString("text"), e.optLong("ts_ms"), demo, notifyEach);
@@ -152,8 +154,8 @@ final class Poller {
                     Alerts.add(c, "auto_off", "info", "DEMO: real EV relay OFF sent: " + rr.optString("message"), System.currentTimeMillis(), true, notifyEach);
                 }
             }
-            if (!firstContact && newEvents > 5) {
-                Alerts.show(c, newEvents + " alerts while you were away. Open FARR Q Charge to see them.", "info");
+            if (!firstContact && visible > 5) {
+                Alerts.show(c, visible + " alerts while you were away. Open FARR Q Charge to see them.", "info");
             }
             Store.putLong(c, k(demo, "lastSync"), System.currentTimeMillis());
             r.put("ok", true); r.put("pushed", pushed); r.put("newSessions", newSessions); r.put("newEvents", newEvents);
