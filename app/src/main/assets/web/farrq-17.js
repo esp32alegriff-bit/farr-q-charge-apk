@@ -5,6 +5,7 @@
 (function(){
 'use strict';
 const N=window.FarrNative||null;
+window.FARR_VER='Ver_FarrQ_2.1.2';
 window.FARR_APP_URL='https://github.com/esp32alegriff-bit/farr-q-charge-apk/releases/latest';
 
 /* ---------- bridge ---------- */
@@ -532,6 +533,7 @@ window.farrAutoRows=function(src){
 };
 
 /* ---------- 1.10: view from anywhere (a copy of the log in the owner's own Google Sheet) ---------- */
+const RM_SCRIPT='2.1.2';
 let rmTimer=null, rmLast=0, rmBusy=false, rmSaveOrig=null, rmPending=null;
 function rmCfg(){const c=sync('config')||{};return c;}
 function rmOn(){const c=rmCfg();return !!(N&&c.remoteUrl&&c.remoteToken);}
@@ -601,7 +603,8 @@ async function rmSend(manual){
     try{if(rmPending){const old=JSON.parse(localStorage.getItem('farrq.rmAuto')||'[]').filter(t=>!rmPending.gone.includes(t));localStorage.setItem('farrq.rmAuto',JSON.stringify([...new Set(old.concat(rmPending.sent))].slice(-500)));}}catch(e){}
     let note='';
     try{const m=rmMerge(r.readings);if(m.added||m.filled)note=' · '+m.added+' new from the other phone'+(m.filled?', '+m.filled+' filled in':'');if(m.added||m.filled)say('Updated from the other phone');}catch(e){note=' · could not read the other phone ('+e.message+')';}
-    setRm('Synced '+ago(Date.now()).replace('0 s ago','just now')+': '+(r.message||'ok')+note);
+    const sv=r.script?('Sheet script '+r.script+(r.script===RM_SCRIPT?' (matches)':' - paste the new script and redeploy')):'Sheet script is OLD - paste the new script and redeploy';
+    setRm('Synced '+ago(Date.now()).replace('0 s ago','just now')+': '+(r.message||'ok')+note+'\nApp '+(window.FARR_VER||'')+' · '+sv);
   }
   catch(e){setRm('Not sent: '+e.message);}
   rmBusy=false;

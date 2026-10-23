@@ -27,11 +27,13 @@
 */
 
 var PASSWORD = 'CHANGE-ME';
+var SCRIPT_VERSION = '2.1.2';   // shown in the app and in the Summary and Phones tabs
 
 var TABS = {
   charges:  {name: 'Charge log',     head: ['When', 'Where', 'Battery %', 'Stored kWh', 'Wall kWh', 'Cost R', 'Measured', 'Auto (no charge log)', 'Phone', 'Updated'], key: [0, 1]},
   trips:    {name: 'Trips',          head: ['When', 'Km', 'kWh used', 'kWh/100km', 'Odometer', 'Battery %', 'Phone', 'Updated'], key: [0]},
   readings: {name: 'Readings',       head: ['When', 'Type', 'Odometer', 'Battery %', 'Where', 'Car km', 'Phone', 'Updated'], key: [0, 1], fillBlanksOnly: true},
+  phones:   {name: 'Phones',         head: ['Phone', 'App version', 'Last sync', 'Entries', 'Sheet script'], key: [0]},
   sessions: {name: 'Meter sessions', head: ['Started', 'Ended', 'kWh', 'Minutes', 'Peak W', 'Why it ended', 'Updated'], key: [0]}
 };
 
@@ -55,6 +57,7 @@ function doPost(e) {
         return [d_(r.ts), r.kind, r.odo, r.pct, r.where, r.carKm, phone, now];
       }));
       if (p.autoRemove && p.autoRemove.length) removeAuto_(ss, p.autoRemove);
+      n += upsert_(ss, TABS.phones, [[phone, String(p.app || ''), now, (p.readings || []).length, SCRIPT_VERSION]]);
       summary_(ss, p, phone, now);
     }
     if (p.sessions && p.sessions.length) {
@@ -63,7 +66,7 @@ function doPost(e) {
       }));
     }
     if (p.kind === 'meter' && p.live) live_(ss, p.live, now);
-    var extra = {};
+    var extra = {script: SCRIPT_VERSION};
     if (p.kind === 'app' && p.wantReadings) extra.readings = readings_(ss);
     return out_(true, 'Sheet updated (' + n + ' rows checked)', extra);
   } catch (err) {
@@ -168,11 +171,13 @@ function summary_(ss, p, phone, now) {
     ['', ''],
     ['LAST 7 DAYS', ''], ['Trips', a.trips], ['Km', a.km], ['kWh/100km', a.eff], ['Charges', a.charges], ['Wall kWh', a.wall], ['Cost R', a.cost],
     ['', ''],
-    ['LAST 30 DAYS', ''], ['Trips', b.trips], ['Km', b.km], ['kWh/100km', b.eff], ['Charges', b.charges], ['Wall kWh', b.wall], ['Cost R', b.cost]
+    ['LAST 30 DAYS', ''], ['Trips', b.trips], ['Km', b.km], ['kWh/100km', b.eff], ['Charges', b.charges], ['Wall kWh', b.wall], ['Cost R', b.cost],
+    ['', ''],
+    ['VERSIONS', ''], ['Sheet script', SCRIPT_VERSION], ['App (last sender)', String(p.app || '')]
   ];
   sh.clear();
   sh.getRange(1, 1, v.length, 2).setValues(v.map(function (r) { return [r[0], r[1] == null ? '' : r[1]]; }));
-  sh.getRange('A1').setFontWeight('bold'); sh.getRange('A9').setFontWeight('bold'); sh.getRange('A17').setFontWeight('bold');
+  sh.getRange('A1').setFontWeight('bold'); sh.getRange('A9').setFontWeight('bold'); sh.getRange('A17').setFontWeight('bold'); sh.getRange('A25').setFontWeight('bold');
   sh.setColumnWidth(1, 200); sh.setColumnWidth(2, 180);
 }
 

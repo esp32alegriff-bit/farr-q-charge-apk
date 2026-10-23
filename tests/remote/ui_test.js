@@ -14,7 +14,7 @@ const path=require('path');
     if(m==='setConfig'){Object.assign(cfg,a);return JSON.stringify(cfg);}
     if(m==='sessions')return JSON.stringify({sessions:window.__sess||sess});
     return JSON.stringify({});},
-   call(id,m,a){window.__calls.push({m,a:JSON.parse(a)});setTimeout(()=>window.__farrCb(id,true,JSON.stringify({ok:true,message:'Sheet updated',readings:window.__remote||[]})),10);},
+   call(id,m,a){window.__calls.push({m,a:JSON.parse(a)});setTimeout(()=>window.__farrCb(id,true,JSON.stringify({ok:true,message:'Sheet updated',script:window.__script===undefined?'2.1.2':window.__script,readings:window.__remote||[]})),10);},
    shareText(){},shareFile(){}};
   localStorage.setItem('farrq.entries',JSON.stringify([
    {ts:T-3600e3,kind:'charge',odo:1000,pct:50,where:'Home'},
@@ -98,6 +98,12 @@ const path=require('path');
  await pg.evaluate(({ts0})=>{window.__remote=[{ts:ts0+5,kind:'charge',odo:1005,pct:60,where:'Home',carKm:''}];},{ts0});
  await pg.evaluate(()=>farrRemoteSend());await pg.waitForTimeout(600);
  ok((await pg.evaluate(()=>E.length))===1,'after Start fresh old Sheet entries are not brought back');
+ // versions shown
+ ok((await pg.evaluate(()=>document.getElementById('rmMsg').textContent)).includes('App Ver_FarrQ_2.1.2')&&(await pg.evaluate(()=>document.getElementById('rmMsg').textContent)).includes('matches'),'status shows app version and matching sheet script');
+ await pg.evaluate(()=>{window.__script='2.0';});await pg.evaluate(()=>farrRemoteSend());await pg.waitForTimeout(500);
+ ok((await pg.evaluate(()=>document.getElementById('rmMsg').textContent)).includes('paste the new script'),'old script version is flagged');
+ await pg.evaluate(()=>{window.__script=null;});await pg.evaluate(()=>farrRemoteSend());await pg.waitForTimeout(500);
+ ok((await pg.evaluate(()=>document.getElementById('rmMsg').textContent)).includes('OLD'),'missing script version is flagged as OLD');
  // backup/diagnostics must not leak password
  const leak=await pg.evaluate(()=>{try{return JSON.stringify(window.farrInfoData?farrInfoData():'')}catch(e){return ''}});
  ok(!leak.includes('"pw"'),'diagnostics do not show the password');
