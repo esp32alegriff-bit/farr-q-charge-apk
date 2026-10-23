@@ -114,7 +114,7 @@ window.farrBackupExtra=function(){
   const out=[], row=(ts,kind,payload)=>{const d=new Date(ts);out.push([d.toLocaleDateString('en-ZA'),d.toLocaleTimeString('en-ZA'),kind,'','',b64e(payload),'',ts].join(','));};
   MS.forEach(x=>row(x.start_ms||x.end_ms,'meter',x));
   const a=sync('alerts'); ((a&&a.alerts)||[]).filter(x=>!x.demo).slice(0,300).forEach(x=>row(x.ts,'alert',x));
-  const c=sync('config'); if(c){const k=Object.assign({},c);delete k.relayToken;delete k.mqttPass;delete k.demo;row(Date.now(),'settings17',k);}
+  const c=sync('config'); if(c){const k=Object.assign({},c);delete k.relayToken;delete k.mqttPass;delete k.demo;delete k.remoteUrl;delete k.remoteToken;delete k.remoteName;delete k.remoteLastOk;delete k.remoteLastMsg;row(Date.now(),'settings17',k);}
   return out;
 };
 window.farrImportExtra=function(c){
@@ -154,7 +154,7 @@ async function tick(){
   inflight=true;
   try{LIVE=await call('live');}catch(e){LIVE={online:false,error:e.message};}
   inflight=false;
-  if(LIVE&&LIVE.sessionsCount!=null&&LIVE.sessionsCount!==MS.length){loadMS();try{renderHome();}catch(e){}}
+  if(LIVE&&LIVE.sessionsCount!=null&&LIVE.sessionsCount!==MS.length){loadMS();try{renderHome();}catch(e){}try{rmSoon(4000);}catch(e){}}
   paintLive();
   schedule();
 }
@@ -464,6 +464,8 @@ function infoData(){
   const app=sync('appInfo')||{}, st=sync('state')||{}, c=Object.assign({},sync('config')||{});
   if(c.relayToken)c.relayToken='••••'+c.relayToken.slice(-2);
   if(c.mqttPass)c.mqttPass='••••';
+  if(c.remoteToken)c.remoteToken='••••';
+  if(c.remoteUrl)c.remoteUrl=c.remoteUrl.slice(0,40)+'…';
   const al=sync('alerts')||{alerts:[]};
   let s1={};try{s1={rateHome:S.rateHome,rateStation:S.rateStation,rateSolar:S.rateSolar,loss:S.loss,pack:S.pack,claim:S.claim,petrol:S.petrol,compare:S.compare,theme:S.theme,entries:E.length,firstEntry:E.length?tstamp(E[0].ts):'--',lastEntry:E.length?tstamp(E[E.length-1].ts):'--'};}catch(e){}
   return {app,st,c,al,s1};
@@ -508,6 +510,71 @@ window.farrShareDiag=function(){
   if(N)N.shareText(t,'FARR Q diagnostics');
 };
 
+
+/* ---------- 1.10: charges the owner forgot to log, filled in from the meter ---------- */
+/* A finished measured session with no charge log after it becomes a Home charge row (MEASURED kWh, battery % estimated).
+   These rows are never stored in the log and never change the trip maths: they disappear as soon as a real charge log is saved. */
+window.farrAutoRows=function(src){
+  if(!N||!MS||!MS.length||!src||!src.length)return [];
+  const sess=MS.filter(x=>!x.demo&&(+x.kwh||0)>=0.1&&x.end_ms>src[0].ts).sort((a,b)=>a.end_ms-b.end_ms);
+  const out=[]; let gapKey=null, gapPct=0;
+  for(const s of sess){
+    let prev=null, next=null;
+    for(const e of src){ if(e.ts<s.end_ms)prev=e; else {next=e;break;} }
+    if(!prev)continue;
+    if(next&&(next.kind==='charge'||next.kind==='start'))continue;     // a real charge log (or a fresh start) after it already covers it
+    if(gapKey!==prev.ts){gapKey=prev.ts;gapPct=prev.pct;}
+    const wall=+s.kwh, stored=wall/(1+S.loss/100);
+    gapPct=Math.min(100,gapPct+stored/S.pack*100);
+    out.push({kind:'charge',type:'charge',ts:s.end_ms,odo:prev.odo,pct:Math.round(gapPct),where:'Home',stored,wall,cost:wall*S.rateHome,measured:true,auto:true});
+  }
+  return out;
+};
+
+/* ---------- 1.10: view from anywhere (a copy of the log in the owner's own Google Sheet) ---------- */
+let rmTimer=null, rmLast=0, rmBusy=false;
+function rmCfg(){const c=sync('config')||{};return c;}
+function rmOn(){const c=rmCfg();return !!(N&&c.remoteUrl&&c.remoteToken);}
+function rmPayload(){
+  const real=[...E].sort((a,b)=>a.ts-b.ts), rows=derive();
+  const s7=summ(rowsFor(7)), s30=summ(rowsFor(30)), L=lastState()||{};
+  const sm=x=>({trips:x.trips,km:+x.km.toFixed(1),eff:x.eff==null?null:+x.eff.toFixed(2),charges:x.charges,wall:+x.wall.toFixed(2),cost:+x.cost.toFixed(2)});
+  return {kind:'app',sent:Date.now(),
+    readings:real.map(e=>({ts:e.ts,kind:e.kind,odo:e.odo,pct:e.pct,where:e.where||'',carKm:e.carKm==null?'':e.carKm})),
+    charges:rows.filter(r=>r.type==='charge').map(r=>({ts:r.ts,where:r.where||'Unlogged',pct:r.pct,stored:+r.stored.toFixed(2),wall:+r.wall.toFixed(2),cost:+r.cost.toFixed(2),measured:!!r.measured,auto:!!r.auto})),
+    trips:rows.filter(r=>r.type==='trip').map(r=>({ts:r.ts,km:+r.km.toFixed(1),kwh:r.countEff?+r.used.toFixed(2):'',cons:r.countEff?+r.cons.toFixed(1):'',odo:r.odo,pct:r.pct})),
+    summary:{last7:sm(s7),last30:sm(s30),lastReading:{ts:L.ts||0,odo:L.odo||0,pct:L.pct==null?0:L.pct}},
+    sessions:(MS||[]).slice(-300)};
+}
+async function rmSend(manual){
+  if(!rmOn()){if(manual)setRm('Enter the web address and password first, then Save.');return;}
+  if(rmBusy)return; rmBusy=true;
+  if(manual)setRm('Sending…');
+  try{const r=await call('remotePush',rmPayload());rmLast=Date.now();setRm('Sent: '+(r.message||'ok'));}
+  catch(e){setRm('Not sent: '+e.message);}
+  rmBusy=false;
+}
+function rmSoon(ms){ if(!rmOn())return; clearTimeout(rmTimer); rmTimer=setTimeout(()=>rmSend(false),ms||4000); }
+function setRm(t){const el=$('rmMsg');if(el)el.textContent=t;}
+function paintRemote(){
+  const c=rmCfg();
+  if(!$('rm_url'))return;
+  $('rm_url').value=c.remoteUrl||'';$('rm_token').value=c.remoteToken||'';$('rm_name').value=c.remoteName||'';
+  setRm(c.remoteLastOk?'Last copy sent '+ago(c.remoteLastOk)+'. '+(c.remoteLastMsg||''):(c.remoteUrl?'Not sent yet.':'Off. Nothing leaves this phone until you set this up.'));
+}
+window.farrRemoteSave=function(){
+  const o={remoteUrl:String($('rm_url').value||'').trim(),remoteToken:String($('rm_token').value||'').trim(),remoteName:String($('rm_name').value||'').trim()};
+  if(o.remoteUrl&&!/^https:\/\//.test(o.remoteUrl))return say('The Google web address must start with https://');
+  sync('setConfig',o); say('Saved'); rmSend(true);
+};
+window.farrRemoteSend=function(){rmSend(true);};
+window.addEventListener('load',()=>{
+  // copy to the Sheet a few seconds after any log is saved, when the app opens, and when it comes back to the front
+  try{const _save=window.save; if(typeof _save==='function')window.save=function(){const r=_save.apply(this,arguments);rmSoon(4000);return r;};}catch(e){}
+  setTimeout(()=>rmSoon(500),8000);
+  document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&Date.now()-rmLast>120000)rmSoon(3000);});
+});
+
 /* ---------- screen changes (called from go()) ---------- */
 window.farrOnScreen=function(id){
   screen=id;
@@ -516,7 +583,7 @@ window.farrOnScreen=function(id){
   if(id==='meter'){paintMeter();paintSessions();loadMeterConfig();tick();}
   if(id==='relay'){RELAY=null;paintRelay();paintRelayAuto();loadMeterConfig();tick();relayLoop();}
   if(id==='alerts')paintAlerts();
-  if(id==='conn'){paintConn();tick();}
+  if(id==='conn'){paintConn();paintRemote();tick();}
   if(id==='info'){renderInfo();tick();}
   if(id==='set'){const a=sync('alerts');const u=a&&a.unread;const el=$('alertsRowSub');if(el)el.textContent=u?u+' new alert'+(u>1?'s':''):'Every alert, notifications and background checks';}
 };

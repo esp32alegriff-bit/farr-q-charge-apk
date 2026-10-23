@@ -157,6 +157,7 @@ final class Poller {
             if (!firstContact && visible > 5) {
                 Alerts.show(c, visible + " alerts while you were away. Open FARR Q Charge to see them.", "info");
             }
+            if (newSessions > 0 && !demo) { final Context ac = c.getApplicationContext(); new Thread(() -> Remote.pushMeter(ac)).start(); }   // copy to the owner's Google Sheet (only if set up)
             Store.putLong(c, k(demo, "lastSync"), System.currentTimeMillis());
             r.put("ok", true); r.put("pushed", pushed); r.put("newSessions", newSessions); r.put("newEvents", newEvents);
             r.put("charging", L.optBoolean("charging"));

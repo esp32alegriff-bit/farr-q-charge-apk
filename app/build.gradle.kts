@@ -12,8 +12,8 @@ android {
         applicationId = "za.co.farrusco.farrqcharge"
         minSdk = 26
         targetSdk = 34
-        versionCode = 20
-        versionName = "Ver_FarrQ_1.9.1"
+        versionCode = 21
+        versionName = "Ver_FarrQ_1.10"
     }
 
     compileOptions {

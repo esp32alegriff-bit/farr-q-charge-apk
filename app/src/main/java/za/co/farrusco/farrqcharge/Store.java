@@ -9,7 +9,7 @@ import org.json.JSONObject;
 
 /** Everything the 1.7 layer keeps on the phone (the 1.6 screens keep their own data in WebView localStorage). */
 final class Store {
-    static final String APP_VERSION = "Ver_FarrQ_1.9.1";
+    static final String APP_VERSION = "Ver_FarrQ_1.10";
     static final int MAX_SESSIONS = 5000;
     static final int MAX_ALERTS = 1000;
 
@@ -35,6 +35,11 @@ final class Store {
             o.put("demo", false);
             o.put("demoRealRelay", false);
             o.put("pendingMeter", false);
+            o.put("remoteUrl", "");
+            o.put("remoteToken", "");
+            o.put("remoteName", "");
+            o.put("remoteLastOk", 0);
+            o.put("remoteLastMsg", "");
         } catch (JSONException ignored) {}
         return o;
     }

@@ -181,6 +181,7 @@ final class Bridge {
                 if (!Store.config(c).optBoolean("demo") && Store.config(c).optBoolean("pendingMeter")) Poller.sync(c);
                 return MeterApi.get(c).mqttTest();
             }
+            case "remotePush": return Remote.push(c, a);
             case "relayStatus": return Relay.status(c);
             case "relay": return Relay.command(c, a.optString("path"));
             case "demo": return demo(a.optBoolean("on"));
