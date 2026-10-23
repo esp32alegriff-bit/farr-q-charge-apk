@@ -1,4 +1,4 @@
-# Ver_FarrQ_1.10
+# Ver_FarrQ_2.0
 
 ## New
 - Forgot a charge log? A finished meter session now shows in History as a Home charge tagged AUTO.
