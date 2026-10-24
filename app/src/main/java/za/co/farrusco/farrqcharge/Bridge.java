@@ -175,6 +175,7 @@ final class Bridge {
                 if (a.has("tariff")) { JSONObject t = new JSONObject(); t.put("tariff", a.get("tariff")); Store.mergeConfigQuiet(c, t); }
                 return cfg;
             }
+            case "meterMinutes": return MeterApi.get(c).minutes(a.optLong("from"), a.optLong("to"));
             case "meterDiag": return MeterApi.get(c).diag();
             case "mqttTest": {
                 // make sure the meter has the latest broker settings before it tests them

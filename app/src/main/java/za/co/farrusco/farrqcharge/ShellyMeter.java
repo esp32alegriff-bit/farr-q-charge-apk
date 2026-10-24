@@ -277,6 +277,55 @@ final class ShellyMeter extends MeterApi {
         putLogic(st, ls);
     }
 
+    /** Minute records from the Shelly for a time range, as [ts_ms, avg W, avg A, max W]. Read-only. */
+    JSONObject minutes(long fromSec, long toSec) throws IOException {
+        JSONObject out = new JSONObject();
+        JSONArray pts = new JSONArray();
+        double cal;
+        synchronized (LOCK) { cal = state().optJSONObject("cfg").optDouble("cal_factor", 1.0); }
+        long from = Math.max(fromSec, 1_600_000_000L), to = toSec;
+        try {
+            for (int chunk = 0; chunk < 30 && from < to; chunk++) {
+                JSONObject r = get("/rpc/EM1Data.GetData?id=0&ts=" + from + "&end_ts=" + to, 6000);
+                JSONArray keys = r.optJSONArray("keys");
+                int iWh = 0, iMax = 4, iAvgA = -1, iMaxA = -1;
+                if (keys != null) for (int i = 0; i < keys.length(); i++) {
+                    String k = keys.optString(i);
+                    if ("total_act_energy".equals(k)) iWh = i;
+                    else if ("max_act_power".equals(k)) iMax = i;
+                    else if ("avg_current".equals(k)) iAvgA = i;
+                    else if ("max_current".equals(k)) iMaxA = i;
+                }
+                JSONArray data = r.optJSONArray("data");
+                int got = 0;
+                if (data != null) for (int b = 0; b < data.length(); b++) {
+                    JSONObject blk = data.optJSONObject(b);
+                    if (blk == null) continue;
+                    long ts = blk.optLong("ts"), period = blk.optLong("period", 60);
+                    if (ts < 1_600_000_000L) continue;
+                    JSONArray vals = blk.optJSONArray("values");
+                    if (vals == null) continue;
+                    for (int i = 0; i < vals.length(); i++) {
+                        JSONArray row = vals.optJSONArray(i);
+                        if (row == null) continue;
+                        long mts = ts + i * period;
+                        if (mts < fromSec || mts > to) continue;
+                        double w = row.optDouble(iWh, 0) * cal * 60.0;
+                        double a = iAvgA >= 0 ? Math.abs(row.optDouble(iAvgA, 0)) : (iMaxA >= 0 ? Math.abs(row.optDouble(iMaxA, 0)) : w / 230.0);
+                        JSONArray p = new JSONArray();
+                        p.put(mts * 1000L); p.put(Math.round(w)); p.put(Math.round(a * cal * 100) / 100.0); p.put(Math.round(row.optDouble(iMax, 0) * cal));
+                        pts.put(p); got++;
+                    }
+                }
+                long next = r.optLong("next_record_ts", 0);
+                if (got == 0 || next <= from || next > to) break;
+                from = next;
+            }
+            out.put("points", pts); out.put("from", fromSec); out.put("to", toSec);
+        } catch (JSONException e) { throw new IOException("Could not read the Shelly reply"); }
+        return out;
+    }
+
     /* ================= history for the app ================= */
     private JSONObject after(String arrKey, String outKey, long after) {
         synchronized (LOCK) {

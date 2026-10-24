@@ -5,7 +5,7 @@
 (function(){
 'use strict';
 const N=window.FarrNative||null;
-window.FARR_VER='Ver_FarrQ_2.1.7';
+window.FARR_VER='Ver_FarrQ_2.2';
 window.FARR_APP_URL='https://github.com/esp32alegriff-bit/farr-q-charge-apk/releases/latest';
 
 /* ---------- bridge ---------- */
@@ -135,7 +135,7 @@ window.farrBack=function(){
   if(dlgClose){dlgClose(false);return true;}
   const on=document.querySelector('.screen.on'); const id=on?on.id.slice(2):'home';
   if(id==='home')return false;
-  if(['meter','relay','alerts','conn','info'].includes(id))go('set');
+  if(['meter','relay','alerts','conn','info','learn'].includes(id))go('set');
   else if(id==='set')go('graph');
   else go('home');
   return true;
@@ -168,6 +168,7 @@ function statusText(L){
   return L.live&&L.live.charging?'Charging':'Idle';
 }
 function paintLive(){
+  try{if(window.farr22)window.farr22.onLive(LIVE);}catch(e){}
   if(screen==='home')paintHomeCard();
   if(screen==='meter')paintMeter();
   if(screen==='relay')paintRelayAuto();

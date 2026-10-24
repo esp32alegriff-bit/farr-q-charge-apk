@@ -18,6 +18,8 @@ abstract class MeterApi {
     abstract JSONObject diag() throws IOException;
     abstract JSONObject mqttTest() throws IOException;
     abstract boolean isDemo();
+    /** Per-minute points [ts_ms, avg W, avg A, max W] between two epoch-second times. Only the Shelly keeps these. */
+    JSONObject minutes(long fromSec, long toSec) throws IOException { throw new IOException("Minute data is only available with the Shelly meter."); }
 
     static MeterApi get(Context c) {
         JSONObject cfg = Store.config(c);
@@ -92,6 +94,7 @@ abstract class MeterApi {
         JSONObject setConfig(JSONObject p) throws IOException { return resolve().setConfig(p); }
         JSONObject diag() throws IOException { return resolve().diag(); }
         JSONObject mqttTest() throws IOException { return resolve().mqttTest(); }
+        JSONObject minutes(long f, long t) throws IOException { return resolve().minutes(f, t); }
     }
 
     /* ================= demo meter ================= */
