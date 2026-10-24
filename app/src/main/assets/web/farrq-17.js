@@ -5,7 +5,7 @@
 (function(){
 'use strict';
 const N=window.FarrNative||null;
-window.FARR_VER='Ver_FarrQ_2.1.3';
+window.FARR_VER='Ver_FarrQ_2.1.4';
 window.FARR_APP_URL='https://github.com/esp32alegriff-bit/farr-q-charge-apk/releases/latest';
 
 /* ---------- bridge ---------- */
@@ -270,6 +270,7 @@ function paintRelayAuto(){
   paintModeChips();
   const a=v&&v.auto;
   const t=!v?'Meter not connected, so AUTO cannot run yet.':
+    v.meter_type==='shelly'?'AUTO is not available with the Shelly meter yet. START and STOP work as before and charging is never blocked.':
     v.mode!=='AUTO'?'MANUAL: the meter never switches anything.':
     'AUTO is '+(a&&a.state?a.state:'watching')+(a&&a.below_s?' · below the level for '+a.below_s+' s':'')+'.';
   setTxt('autoState',t); setTxt('hAutoState',t);
@@ -385,6 +386,7 @@ window.farrMqTest=async function(){
 
 /* ---------- Demo ---------- */
 function paintDemo(){
+  if(!$('demoOn'))return;   // 2.1.4: the demo card is gone
   const c=sync('config')||{};
   $('demoOn').classList.toggle('on',!!c.demo);$('demoOff').classList.toggle('on',!c.demo);
   $('demoRelay').checked=!!c.demoRealRelay;
@@ -489,7 +491,7 @@ function infoHTML(){
   let h=healthHTML();
   h+=section('App',kv(app)+R('Background check last ran',ago(st.lastPoll))+R('Last full sync with meter',ago(st.lastSync))+R('Meter last seen',ago(st.lastSeen))+
     R('Measured sessions on this phone',MS.length)+R('Alerts on this phone',(al.alerts||[]).length)+R('Notifications',st.notifAllowed?'allowed':'not allowed')+
-    R('Checks while sleeping',st.batteryExempt?'allowed':'limited')+R('On Wi-Fi now',st.onWifi?'yes':'no')+R('Demo meter',c.demo?'ON':'off'));
+    R('Checks while sleeping',st.batteryExempt?'allowed':'limited')+R('On Wi-Fi now',st.onWifi?'yes':'no'));
   h+=section('FARR Q settings (same as 1.6)',kv(s1));
   h+=section('Connections and meter settings stored on this phone',kv(c));
   h+=section('Meter, live reading'+(LIVE&&LIVE.demo?' (DEMO)':''),L?kv(L):'<div class="small">No reading from the meter yet. Address: '+esc(c.meterUrl)+'</div>');
@@ -535,6 +537,9 @@ window.farrAutoRows=function(src){
 /* ---------- 1.10: view from anywhere (a copy of the log in the owner's own Google Sheet) ---------- */
 const RM_SCRIPT='2.1.2';
 let rmTimer=null, rmLast=0, rmBusy=false, rmSaveOrig=null, rmPending=null;
+/* 2.1.4: the last Sheet sync result, kept so the report can show the Sheet status */
+function rmInfoGet(){try{return JSON.parse(localStorage.getItem('farrq.rmInfo')||'{}');}catch(e){return {};}}
+function rmInfoSave(o){try{localStorage.setItem('farrq.rmInfo',JSON.stringify(Object.assign(rmInfoGet(),o)));}catch(e){}}
 function rmCfg(){const c=sync('config')||{};return c;}
 function rmOn(){const c=rmCfg();return !!(N&&c.remoteUrl&&c.remoteToken);}
 function rmAutoKeys(rows){return rows.filter(r=>r.type==='charge'&&r.auto).map(r=>r.ts);}
@@ -601,12 +606,13 @@ async function rmSend(manual){
   try{
     const pl=rmPayload();const r=await call('remotePush',pl);rmLast=Date.now();
     try{if(rmPending){const old=JSON.parse(localStorage.getItem('farrq.rmAuto')||'[]').filter(t=>!rmPending.gone.includes(t));localStorage.setItem('farrq.rmAuto',JSON.stringify([...new Set(old.concat(rmPending.sent))].slice(-500)));}}catch(e){}
-    let note='';
-    try{const m=rmMerge(r.readings);if(m.added||m.filled)note=' · '+m.added+' new from the other phone'+(m.filled?', '+m.filled+' filled in':'');if(m.added||m.filled)say('Updated from the other phone');}catch(e){note=' · could not read the other phone ('+e.message+')';}
+    let note='', mm={added:0,filled:0};
+    try{const m=rmMerge(r.readings);mm=m;if(m.added||m.filled)note=' · '+m.added+' new from the other phone'+(m.filled?', '+m.filled+' filled in':'');if(m.added||m.filled)say('Updated from the other phone');}catch(e){note=' · could not read the other phone ('+e.message+')';}
     const sv=r.script?('Sheet script '+r.script+(r.script===RM_SCRIPT?' (matches)':' - paste the new script and redeploy')):'Sheet script is OLD - paste the new script and redeploy';
+    rmInfoSave({tryTs:Date.now(),tryOk:true,err:'',okTs:Date.now(),msg:r.message||'ok',script:r.script||'',match:r.script===RM_SCRIPT,added:mm.added,filled:mm.filled});
     setRm('Synced '+ago(Date.now()).replace('0 s ago','just now')+': '+(r.message||'ok')+note+'\nApp '+(window.FARR_VER||'')+' · '+sv);
   }
-  catch(e){setRm('Not sent: '+e.message);}
+  catch(e){rmInfoSave({tryTs:Date.now(),tryOk:false,err:String(e&&e.message||e)});setRm('Not sent: '+e.message);}
   rmBusy=false;
 }
 function rmSoon(ms){ if(!rmOn())return; clearTimeout(rmTimer); rmTimer=setTimeout(()=>rmSend(false),ms||4000); }
@@ -623,6 +629,16 @@ window.farrRemoteSave=function(){
   sync('setConfig',o); say('Saved'); rmSend(true);
 };
 window.farrRemoteSend=function(){rmSend(true);};
+/* 2.1.4: facts the PDF report prints about the meter and the Google Sheet */
+window.farrReportInfo=function(){
+  const c=rmCfg(), i=rmInfoGet(), st=sync('state')||{}, now=!!(LIVE&&LIVE.live), L=(LIVE&&LIVE.live)||st.lastLive||null;
+  return {ver:window.FARR_VER||'', sheetOn:rmOn(), phone:c.remoteName||'', expectedScript:RM_SCRIPT,
+    okTs:i.okTs||c.remoteLastOk||0, msg:i.msg||c.remoteLastMsg||'', script:i.script||'', match:!!i.match,
+    added:i.added||0, filled:i.filled||0, tryTs:i.tryTs||0, tryOk:i.tryOk!==false, err:i.err||'',
+    meterUrl:c.meterUrl||'', meterType:L?(L.meter_type||''):'', meterSeen:now, lastSeen:st.lastSeen||0,
+    rssi:L&&L.wifi?L.wifi.rssi:null, volts:L?L.volts:null, freq:L?L.freq:null};
+};
+window.farrMeterSessions=function(){return (MS||[]).filter(x=>!x.demo).slice().sort((a,b)=>a.start_ms-b.start_ms);};
 window.addEventListener('load',()=>{
   // copy to the Sheet a few seconds after any log is saved, when the app opens, when it comes to the front, and every 90 s while it is open
   try{

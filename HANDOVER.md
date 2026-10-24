@@ -46,7 +46,7 @@ Home Wi-Fi: `Farrusco` (2.4 GHz, must stay on channel 6) and `Farrusco_5G` (5 GH
 - The meter address (`http://192.168.1.128`), relay address (`http://192.168.1.127`) and relay token are typed into the app by the owner. Defaults for the addresses are pre-filled; the token is not.
 - Calibration is in the app: live watts every second, a factor field, and a "Match" helper that takes the Ellies meter reading (the car draws about 3000 W at 13 A). The factor is saved **on the meter**, so every phone and display uses it.
 - Info and diagnostics page: everything the app is set to, meter and relay status, logs, how-to guides (router reservation, calibration, 1.6→1.7 move, updates, troubleshooting), technical reference, and "Share diagnostics".
-- **Demo meter** switch: fakes a 6-minute charge cycle so every screen, alert and AUTO action can be tested before the hardware exists. Demo data is marked DEMO and never enters the real history.
+- **Demo meter**: removed in Ver_FarrQ_2.1.4 (the Shelly is installed). Any old demo data is cleared on first start.
 
 **Alerts and background (hard rule: low CPU, RAM and battery)**
 - All alert types shown and notified (each can be switched off).

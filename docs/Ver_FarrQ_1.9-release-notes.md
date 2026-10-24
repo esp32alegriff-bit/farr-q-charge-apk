@@ -23,7 +23,7 @@ Same look as 1.6 to 1.8. Change: the app can read a **Shelly EM Gen3** energy me
 
 **First use with the real Shelly**
 - Join the Shelly to the home Wi-Fi, give it a fixed address in the router, put that address in Settings, Meter address.
-- Set the clamp type once on the Shelly: `http://<meter address>/rpc/EM1.SetConfig?id=0&config={"ct_type":"50A"}`.
+- Set the clamp type once on the Shelly: `http://<meter address>/rpc/EM1.SetConfig?id=0&config={"ct_type":"50AEMG3"}` (this meter accepts only `50AEMG3` or `80A`; plain `50A` is rejected).
 - If watts read negative, the clamp is on backwards (K to L), or set reverse: `http://<meter address>/rpc/EM1.SetConfig?id=0&config={"reverse":true}`.
 - Compare with the Ellies meter on a kettle, then the charger, and set the Calibration factor in the app.
 

@@ -136,7 +136,7 @@ final class ShellyMeter extends MeterApi {
                 if (meterErrors.length() > 0 && nowMs - st.optLong("errAlertAt") > ALERT_EVERY_MS) {
                     boolean ct = meterErrors.toString().contains("ct_type_not_set");
                     addEvent(st, nowMs, "meter_error", "warning", ct
-                            ? "Shelly: clamp type is not set. Set the CT type to 50A on the meter."
+                            ? "Shelly: clamp type is not set. Set the CT type to 50AEMG3 on the meter (this meter accepts 50AEMG3 or 80A)."
                             : "Shelly reports a fault: " + meterErrors.toString());
                     st.put("errAlertAt", nowMs);
                 }

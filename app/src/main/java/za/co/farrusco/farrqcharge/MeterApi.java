@@ -21,13 +21,27 @@ abstract class MeterApi {
 
     static MeterApi get(Context c) {
         JSONObject cfg = Store.config(c);
-        if (cfg.optBoolean("demo")) return new DemoMeter(c);
+        if (cfg.optBoolean("demo")) { retireDemo(c); cfg = Store.config(c); }   // 2.1.4: the demo meter is gone, the real meter is always used
         String base = Net.trimSlash(cfg.optString("meterUrl"));
         String type = cfg.optString("meterType", "auto");
         if (type.equals("auto")) type = Store.getString(c, "kind:" + base, "");
         if (type.equals("shelly")) return new ShellyMeter(c, base);
         if (type.equals("esp32")) return new HttpMeter(base);
         return new Detecting(c, base);
+    }
+
+    /** 2.1.4: removes the old demo meter data and switches the demo flag off for good. */
+    static void retireDemo(Context c) {
+        try {
+            android.content.SharedPreferences.Editor ed = Store.prefs(c).edit();
+            for (String k : Store.prefs(c).getAll().keySet())
+                if (k.startsWith("demo_") || k.equals("demoSessions") || k.equals(DemoMeter.KEY)) ed.remove(k);
+            ed.apply();
+            Alerts.removeDemo(c);
+            JSONObject p = new JSONObject();
+            p.put("demo", false); p.put("demoRealRelay", false);
+            Store.mergeConfigQuiet(c, p);
+        } catch (Exception ignored) { }
     }
 
     static JSONObject parse(String s) throws IOException {
