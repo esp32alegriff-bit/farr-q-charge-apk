@@ -32,8 +32,16 @@ final class Relay {
         JSONObject cfg = Store.config(c);
         String base = Net.trimSlash(cfg.optString("relayUrl"));
         try {
-            String body = Net.request(method, base + path, "POST".equals(method) ? "" : null, cfg.optString("relayToken"), 3000);
-            if ("POST".equals(method) && body.trim().isEmpty()) body = Net.request("GET", base + "/api/v1/status", null, cfg.optString("relayToken"), 3000);
+            String body;
+            try {
+                body = Net.request(method, base + path, "POST".equals(method) ? "" : null, cfg.optString("relayToken"), 5000);
+            } catch (java.io.IOException first) {
+                if (first instanceof Net.HttpError) throw first;
+                // 2.1.6+: the relay board is a small ESP32 and can be slow when several phones and panels ask at once; wait and try once more
+                try { Thread.sleep(600); } catch (InterruptedException ignored) {}
+                body = Net.request(method, base + path, "POST".equals(method) ? "" : null, cfg.optString("relayToken"), 6000);
+            }
+            if ("POST".equals(method) && body.trim().isEmpty()) body = Net.request("GET", base + "/api/v1/status", null, cfg.optString("relayToken"), 5000);
             JSONObject j = new JSONObject(body);
             JSONObject r = result(true, j.optBoolean("relay1_on"), j.optBoolean("relay2_on"), j.optString("message", "Connected"), base);
             Store.putObject(c, "relayLast", r);

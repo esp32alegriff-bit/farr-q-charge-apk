@@ -5,7 +5,7 @@
 (function(){
 'use strict';
 const N=window.FarrNative||null;
-window.FARR_VER='Ver_FarrQ_2.1.6';
+window.FARR_VER='Ver_FarrQ_2.1.7';
 window.FARR_APP_URL='https://github.com/esp32alegriff-bit/farr-q-charge-apk/releases/latest';
 
 /* ---------- bridge ---------- */
@@ -300,7 +300,7 @@ async function relayLoop(){
   const g=relayGen;
   let r; try{r=await call('relayStatus');}catch(e){r={connected:false,message:e.message};}
   if(g===relayGen){RELAY=r;paintRelay();}
-  relayTimer=setTimeout(relayLoop,3000);
+  relayTimer=setTimeout(relayLoop,5000);
 }
 async function relayCmd(path){
   relayGen++;

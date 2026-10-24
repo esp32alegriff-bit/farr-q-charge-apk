@@ -15,3 +15,4 @@ Where to see it
 - Sheet: Summary tab (VERSIONS) and Phones tab (each phone, its app version, last sync, script version).
 | Ver_FarrQ_2.1.5 | 2.1.2 (unchanged) | Relay board address corrected to 192.168.1.120 in the app help text, defaults and docs |
 | Ver_FarrQ_2.1.6 | 2.1.2 (unchanged) | AUTO charge no longer counted twice when a charge log is saved during the session; relay buttons: old status answers cannot overwrite a command, command is checked and retried once; report trend dates no longer overlap |
+| Ver_FarrQ_2.1.7 | 2.1.2 (unchanged) | Relay board: waits 5 to 6 s and retries once before saying Not reachable; asks every 5 s instead of 3 s |
