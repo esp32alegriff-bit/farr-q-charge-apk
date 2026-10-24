@@ -105,7 +105,7 @@ final class Alerts {
         ensureChannel(c);
         Intent open = new Intent(c, MainActivity.class).putExtra("openScreen", "alerts").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
         PendingIntent pi = PendingIntent.getActivity(c, 7, open, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-        String title = "critical".equals(level) ? "FARR Q · urgent" : "warning".equals(level) ? "FARR Q · warning" : "FARR Q Charge";
+        String title = "critical".equals(level) ? "FARR Q · urgent" : "warning".equals(level) ? "FARR Q · warning" : "FARRUSCO-Q CHARGE";
         Notification n = new Notification.Builder(c, CHANNEL)
                 .setSmallIcon(R.drawable.ic_stat)
                 .setContentTitle(title)
