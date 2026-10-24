@@ -13,3 +13,4 @@
 Where to see it
 - App: Connections > View from anywhere, under the buttons: "App ... · Sheet script ... (matches)".
 - Sheet: Summary tab (VERSIONS) and Phones tab (each phone, its app version, last sync, script version).
+| Ver_FarrQ_2.1.5 | 2.1.2 (unchanged) | Relay board address corrected to 192.168.1.120 in the app help text, defaults and docs |

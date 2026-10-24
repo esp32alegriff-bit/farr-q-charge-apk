@@ -27,7 +27,7 @@ Owner: GitHub `esp32alegriff-bit`. Hard rules for AI tools are in `AGENTS.md`.
 
 | Part | Where | Status |
 |---|---|---|
-| Relay board (ESP32 dual relay) | `192.168.1.127`, LAN API with `X-Farrusco-Token`, ESP-NOW channel 6 | Working. Firmware **must not change**. Relay 1 = Eskom input to the inverter (GPIO17), Relay 2 = EV charger (GPIO16). No contactors fitted yet, so the relays click but do not switch power. |
+| Relay board (ESP32 dual relay) | `192.168.1.120`, LAN API with `X-Farrusco-Token`, ESP-NOW channel 6 | Working. Firmware **must not change**. Relay 1 = Eskom input to the inverter (GPIO17), Relay 2 = EV charger (GPIO16). No contactors fitted yet, so the relays click but do not switch power. |
 | Waveshare 4.3" and CrowPanel 7" displays | ESP-NOW + MQTT from the Pi | Integrated, can also control the relays. **Do not change.** |
 | Raspberry Pi 4 with ICM + FARRUSCO dashboard | `192.168.1.102`; brokers on 1883 (ICM, login `ICM`) and 1884 (FARRUSCO displays, read-only login) | Reverse-engineered and mapped with ChatGPT. **Do not change.** |
 | Estelle Cherry Q Charging app (Codex) | repo `Estelle-Cherry-Q-Charging`, tags EF_1.1–EF_1.3 | Relay control app with time-based kWh estimates. **Read only. Do not change.** |
@@ -43,7 +43,7 @@ Home Wi-Fi: `Farrusco` (2.4 GHz, must stay on channel 6) and `Farrusco_5G` (5 GH
 - History moves from 1.6 by the existing "Send backup as text" → "Paste backup" (or sharing the CSV into the app). 1.7 backups also carry measured sessions, alerts and the non-secret settings, in the same 8-column CSV so 1.6 simply skips the new rows.
 - Bottom tabs stay Home, History, Graphs, Share. A live meter card on Home. New pages under Settings: Live meter and calibration, Relays and AUTO, Alerts, Connections, Info and diagnostics.
 - When a Home (or Solar) charge is logged, the measured kWh of the meter sessions that ended since the previous reading replaces the battery-% × 42.7 × (1 + loss) estimate. Station charges are unchanged.
-- The meter address (`http://192.168.1.128`), relay address (`http://192.168.1.127`) and relay token are typed into the app by the owner. Defaults for the addresses are pre-filled; the token is not.
+- The meter address (`http://192.168.1.128`), relay address (`http://192.168.1.120`) and relay token are typed into the app by the owner. Defaults for the addresses are pre-filled; the token is not.
 - Calibration is in the app: live watts every second, a factor field, and a "Match" helper that takes the Ellies meter reading (the car draws about 3000 W at 13 A). The factor is saved **on the meter**, so every phone and display uses it.
 - Info and diagnostics page: everything the app is set to, meter and relay status, logs, how-to guides (router reservation, calibration, 1.6→1.7 move, updates, troubleshooting), technical reference, and "Share diagnostics".
 - **Demo meter**: removed in Ver_FarrQ_2.1.4 (the Shelly is installed). Any old demo data is cleared on first start.

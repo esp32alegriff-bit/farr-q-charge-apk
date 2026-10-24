@@ -121,7 +121,7 @@ POST takes any subset of these keys and returns the full config. Unknown keys ar
   "start_w": 100, "start_s": 10, "end_w": 50, "end_s": 60,
   "mode": "MANUAL", "auto_off_w": 100, "auto_off_s": 60, "auto_nostart_min": 10, "overcurrent_a": 14.0,
   "tariff": 3.88,
-  "relay_url": "http://192.168.1.127", "relay_token": "(write only)",
+  "relay_url": "http://192.168.1.120", "relay_token": "(write only)",
   "mqtt_enabled": false, "mqtt_host": "192.168.1.102", "mqtt_port": 1883, "mqtt_user": "ICM", "mqtt_pass": "(write only)"
 }
 ```
@@ -179,4 +179,4 @@ The meter uses its own topic tree only, so it can never clash with the ICM topic
 
 ## 7. Relay board commands the meter and app use (relay firmware unchanged)
 
-From `Estelle-Cherry-Q-Charging/docs/relay-api-contract.md`: `GET /api/v1/status`, `POST /api/v1/relay/{1|2}/{on|off}`, `POST /api/v1/charge/start`, `POST /api/v1/charge/stop`, header `X-Farrusco-Token`. Relay board at `192.168.1.127`.
+From `Estelle-Cherry-Q-Charging/docs/relay-api-contract.md`: `GET /api/v1/status`, `POST /api/v1/relay/{1|2}/{on|off}`, `POST /api/v1/charge/start`, `POST /api/v1/charge/stop`, header `X-Farrusco-Token`. Relay board at `192.168.1.120`.

@@ -12,7 +12,7 @@ Chery Q efficiency tracker with the FARRUSCO EV meter, relays, AUTO and alerts. 
 ## First use
 
 - Move your 1.6 history: in the old web app, Settings → **Send backup as text** → WhatsApp; copy the message; in 1.7, Settings → **Paste backup**.
-- Settings → **Connections**: check the meter (`http://192.168.1.128`) and relay (`http://192.168.1.127`) addresses and type the relay token.
+- Settings → **Connections**: check the meter (`http://192.168.1.128`) and relay (`http://192.168.1.120`) addresses and type the relay token.
 - Settings → **Alerts**: allow notifications and checks while the phone sleeps.
 - The Demo meter was removed in Ver_FarrQ_2.1.4 now that the Shelly is installed.
 

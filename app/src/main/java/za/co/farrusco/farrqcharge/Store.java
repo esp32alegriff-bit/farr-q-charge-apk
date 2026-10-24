@@ -9,7 +9,7 @@ import org.json.JSONObject;
 
 /** Everything the 1.7 layer keeps on the phone (the 1.6 screens keep their own data in WebView localStorage). */
 final class Store {
-    static final String APP_VERSION = "Ver_FarrQ_2.1.4";
+    static final String APP_VERSION = "Ver_FarrQ_2.1.5";
     static final int MAX_SESSIONS = 5000;
     static final int MAX_ALERTS = 1000;
 
@@ -24,7 +24,7 @@ final class Store {
         JSONObject o = new JSONObject();
         try {
             o.put("meterUrl", "http://192.168.1.128");
-            o.put("relayUrl", "http://192.168.1.127");
+            o.put("relayUrl", "http://192.168.1.120");
             o.put("relayToken", "");
             o.put("mqttEnabled", false);
             o.put("mqttHost", "192.168.1.102");

@@ -47,7 +47,7 @@ final class ShellyMeter extends MeterApi {
             o.put("meter_type", "shelly");
             o.put("cal_factor", 1.0); o.put("start_w", 100); o.put("start_s", 10); o.put("end_w", 50); o.put("end_s", 60);
             o.put("mode", "MANUAL"); o.put("auto_off_w", 100); o.put("auto_off_s", 60); o.put("auto_nostart_min", 10); o.put("overcurrent_a", 14.0);
-            o.put("tariff", 3.88); o.put("relay_url", "http://192.168.1.127"); o.put("relay_token_set", false);
+            o.put("tariff", 3.88); o.put("relay_url", "http://192.168.1.120"); o.put("relay_token_set", false);
             o.put("mqtt_enabled", false); o.put("mqtt_host", "192.168.1.102"); o.put("mqtt_port", 1883); o.put("mqtt_user", "ICM"); o.put("mqtt_pass_set", false);
         } catch (JSONException ignored) {}
         return o;

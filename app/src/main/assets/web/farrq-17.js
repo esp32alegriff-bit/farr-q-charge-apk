@@ -5,7 +5,7 @@
 (function(){
 'use strict';
 const N=window.FarrNative||null;
-window.FARR_VER='Ver_FarrQ_2.1.4';
+window.FARR_VER='Ver_FarrQ_2.1.5';
 window.FARR_APP_URL='https://github.com/esp32alegriff-bit/farr-q-charge-apk/releases/latest';
 
 /* ---------- bridge ---------- */
@@ -409,7 +409,7 @@ const GUIDES=[
  'Find the page called DHCP, LAN, Address Reservation, Static Lease or Bound Devices (each router names it differently).',
  'Add a new reservation: paste the meter MAC address shown in the Meter section below, and type 192.168.1.128.',
  'Save or Apply, then restart the meter (unplug and plug its supply).',
- 'Do the same check for the relay board at 192.168.1.127 if you like; do not change the relay board itself.']],
+ 'Do the same check for the relay board at 192.168.1.120 if you like; do not change the relay board itself.']],
 ['Calibrate with the car and the Ellies meter',[
  'Start a normal home charge and wait two minutes for the car to settle (about 3000 W on the 13 A cable).',
  'Open Settings → Live meter and calibration.',
@@ -437,7 +437,7 @@ const GUIDES=[
 ['Troubleshooting each alert',[
  'Meter offline: check the meter supply, that the 2.4 GHz "Farrusco" Wi-Fi is on channel 6, and the address in Connections.',
  'Relay OFF but power still flowing: normal while no contactor is fitted; later it means a stuck or bypassed contactor.',
- 'Relay command failed: check the relay board is on, at 192.168.1.127, and the token in Connections matches.',
+ 'Relay command failed: check the relay board is on, at 192.168.1.120, and the token in Connections matches.',
  'Current above the limit: the car drew more than the over-current level; check the cable and socket for heat.',
  'Charging stopped suddenly: power fell from a full charge to nothing within a minute (breaker, plug pulled, car fault or power cut).',
  'Meter clock not set: the meter has no internet time yet; sessions are corrected once it gets the time.']]
