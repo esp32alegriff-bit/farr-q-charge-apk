@@ -5,7 +5,7 @@
 (function(){
 'use strict';
 const N=window.FarrNative||null;
-window.FARR_VER='Ver_FarrQ_2.1.5';
+window.FARR_VER='Ver_FarrQ_2.1.6';
 window.FARR_APP_URL='https://github.com/esp32alegriff-bit/farr-q-charge-apk/releases/latest';
 
 /* ---------- bridge ---------- */
@@ -293,16 +293,31 @@ function paintRelay(){
   paintRelayButtons();
   if(screen==='home')paintHomeCard();
 }
+let relayGen=0;   // 2.1.6: bumped by every command, so an older status answer can never overwrite a newer command answer
 async function relayLoop(){
   clearTimeout(relayTimer);
   if(!(screen==='relay'||screen==='home')||document.visibilityState!=='visible')return;
-  try{RELAY=await call('relayStatus');}catch(e){RELAY={connected:false,message:e.message};}
-  paintRelay();
+  const g=relayGen;
+  let r; try{r=await call('relayStatus');}catch(e){r={connected:false,message:e.message};}
+  if(g===relayGen){RELAY=r;paintRelay();}
   relayTimer=setTimeout(relayLoop,3000);
 }
 async function relayCmd(path){
-  try{RELAY=await call('relay',{path});paintRelay();say(RELAY.connected?'Done':'Relay did not answer: '+(RELAY.message||''));}
-  catch(e){say('Relay did not answer: '+e.message);}
+  relayGen++;
+  try{
+    RELAY=await call('relay',{path});paintRelay();
+    const m=/relay\/(\d)\/(on|off)$/.exec(path);
+    if(RELAY.connected&&m){   // 2.1.6: check the board really did what was asked, and try once more if not
+      const want=m[2]==='on', now=m[1]==='1'?RELAY.relay1On:RELAY.relay2On;
+      if(now!==want){
+        await new Promise(r=>setTimeout(r,700)); relayGen++;
+        RELAY=await call('relay',{path}); paintRelay();
+        const now2=m[1]==='1'?RELAY.relay1On:RELAY.relay2On;
+        return say(RELAY.connected&&now2===want?'Done':'Relay '+m[1]+' did not change. Tap again.');
+      }
+    }
+    say(RELAY.connected?'Done':'Relay did not answer: '+(RELAY.message||''));
+  }catch(e){say('Relay did not answer: '+e.message);}
 }
 window.farrRelay=async function(n,on){
   if(n===1&&!on&&!await askUser({title:'Turn off Eskom input?',text:'This switches Relay 1 (Eskom input) off.',ok:'Turn off',tone:'red'}))return;
@@ -526,6 +541,7 @@ window.farrAutoRows=function(src){
     for(const e of src){ if(e.ts<s.end_ms)prev=e; else {next=e;break;} }
     if(!prev)continue;
     if(next&&(next.kind==='charge'||next.kind==='start'))continue;     // a real charge log (or a fresh start) after it already covers it
+    if(src.some(e=>e.kind==='charge'&&!e.auto&&e.ts>=(+s.start_ms||s.end_ms)&&e.ts<=s.end_ms))continue;   // 2.1.6: a charge log saved while the session was still running covers it too
     if(gapKey!==prev.ts){gapKey=prev.ts;gapPct=prev.pct;}
     const wall=+s.kwh, stored=wall/(1+S.loss/100);
     gapPct=Math.min(100,gapPct+stored/S.pack*100);

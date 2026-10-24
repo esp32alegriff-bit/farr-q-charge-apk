@@ -27,7 +27,7 @@ final class Relay {
         return r;
     }
 
-    private static JSONObject run(Context c, String method, String path) {
+    private static synchronized JSONObject run(Context c, String method, String path) {
         Net.init(c);
         JSONObject cfg = Store.config(c);
         String base = Net.trimSlash(cfg.optString("relayUrl"));
