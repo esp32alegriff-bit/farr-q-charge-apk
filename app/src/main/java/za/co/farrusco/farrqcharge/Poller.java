@@ -197,7 +197,13 @@ final class Poller {
         if (am == null) return;
         am.cancel(pi);
         if (delayMs <= 0) { Store.putLong(c, "nextPollAt", 0); return; }
-        am.setAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP, SystemClock.elapsedRealtime() + delayMs, pi);
+        long at = SystemClock.elapsedRealtime() + delayMs;
+        boolean exact = false;
+        try {
+            // 2.2.2: an exact wake-up when Android allows it, so "Charging finished" is not held back; otherwise the old way
+            if (Build.VERSION.SDK_INT < 31 || am.canScheduleExactAlarms()) { am.setExactAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP, at, pi); exact = true; }
+        } catch (SecurityException ignored) { exact = false; }
+        if (!exact) am.setAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP, at, pi);
         Store.putLong(c, "nextPollAt", System.currentTimeMillis() + delayMs);
     }
 

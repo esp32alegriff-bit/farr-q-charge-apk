@@ -36,7 +36,7 @@ const path=require('path'), fs=require('fs');
  const info=await pg.evaluate(()=>({auto:derive().filter(x=>x.auto).length,ri:farrReportInfo(),ms:farrMeterSessions().length}));
  ok(info.ms===3,'three meter sessions visible to the report');
  ok(info.ri.sheetOn&&info.ri.match&&info.ri.okTs>0,'report info knows the Sheet status');
- const b64=await pg.evaluate(()=>{const doc=buildReport(window.jspdf.jsPDF,{rows:rowsFor('all'),inc:()=>true,periodLabel:'All entries',cut:0});return btoa(String.fromCharCode(...new Uint8Array(doc.output('arraybuffer'))));});
+ const b64=await pg.evaluate(()=>{const doc=buildReport(window.jspdf.jsPDF,{rows:rowsFor('all'),inc:()=>true,periodLabel:'All entries',cut:0});return (()=>{const u=new Uint8Array(doc.output('arraybuffer'));let t='';for(let i=0;i<u.length;i+=8192)t+=String.fromCharCode.apply(null,u.subarray(i,i+8192));return btoa(t);})();});
  fs.writeFileSync(out,Buffer.from(b64,'base64'));
  ok(fs.statSync(out).size>5000,'PDF built ('+fs.statSync(out).size+' bytes)');
  // each include flag alone and all off must still build

@@ -44,7 +44,7 @@ function sessions(force){
 let MINS=lsGet('farrq.mins',{});
 function saveMins(){
   const ks=Object.keys(MINS).sort((a,b)=>+a-+b);
-  while(ks.length>60)delete MINS[ks.shift()];
+  while(ks.length>120)delete MINS[ks.shift()];
   lsSet('farrq.mins',MINS);
 }
 async function minutesFor(startMs,endMs,open){
@@ -125,26 +125,30 @@ function seriesOf(c){
   return pts.map(p=>[p[0]+30000,p[c.idx]]);
 }
 function drawChart(c,host){
-  const W=Math.max(260,host.clientWidth||320),H=210,ml=46,mr=10,mt=14,mb=34,pw=W-ml-mr,ph=H-mt-mb;
-  const s=seriesOf(c), x0=VIEW[0], x1=VIEW[1];
+  const x0=VIEW[0], x1=VIEW[1];
+  const W=Math.max(260,host.clientWidth||320),ml=46,mr=10,mt=14,mb=34,pw=W-ml-mr;
+  const mk=DATA.marks.filter(m=>m.ts>=x0&&m.ts<=x1).sort((a,b)=>a.ts-b.ts), lastX=[-999,-999,-999,-999];
+  mk.forEach(m=>{const px=ml+(m.ts-x0)/(x1-x0)*pw;let l=0;while(l<3&&px-lastX[l]<42)l++;m._l=l;lastX[l]=px;});
+  const maxL=mk.reduce((a,m)=>Math.max(a,m._l),0), H=210+maxL*18, ph=H-mt-mb-maxL*18;
+  const s=seriesOf(c);
   const vis=s.filter(p=>p[0]>=x0-120000&&p[0]<=x1+120000);
   let ymax=0;(vis.length?vis:s).forEach(p=>{if(p[1]>ymax)ymax=p[1];});
   let step,top;
-  if(c.id==='shC'){step=50;top=Math.max(50,Math.ceil(ymax/50)*50);while(top/step>8){step*=2;top=Math.ceil(ymax/step)*step;}}
+  if(c.id==='shC'){step=5;top=Math.max(5,Math.ceil(ymax/5)*5);while(top/step>10){step*=2;top=Math.ceil(ymax/step)*step;}}
   else{ymax=Math.max(ymax*1.08,c.unit==='A'?2:100);step=niceStep(ymax,4);top=Math.ceil(ymax/step)*step;}
   const X=t=>ml+(t-x0)/(x1-x0)*pw, Y=v=>mt+ph-(v/top)*ph;
   let g='';
   for(let v=0;v<=top+1e-6;v+=step){g+=`<line x1="${ml}" x2="${W-mr}" y1="${Y(v)}" y2="${Y(v)}" style="stroke:var(--line)"/><text x="${ml-6}" y="${Y(v)+4}" text-anchor="end" style="fill:var(--muted);font-size:11px">${c.unit==='R'?'R'+v:(c.unit==='A'?v.toFixed(step<1?1:0):Math.round(v))}</text>`;}
   const span=x1-x0, ts=[1,2,5,10,15,30,60,120,180,360].map(m=>m*60000).find(m=>span/m<=5)||360*60000;
-  for(let t=Math.ceil(x0/ts)*ts;t<=x1;t+=ts){g+=`<line x1="${X(t)}" x2="${X(t)}" y1="${mt}" y2="${mt+ph}" style="stroke:var(--line);opacity:.5"/><text x="${X(t)}" y="${H-mb+14}" text-anchor="middle" style="fill:var(--muted);font-size:11px">${hhmm(t)}</text>`;}
+  for(let t=Math.ceil(x0/ts)*ts;t<=x1;t+=ts){g+=`<line x1="${X(t)}" x2="${X(t)}" y1="${mt}" y2="${mt+ph}" style="stroke:var(--line);opacity:.5"/><text x="${X(t)}" y="${mt+ph+14}" text-anchor="middle" style="fill:var(--muted);font-size:11px">${hhmm(t)}</text>`;}
   if(vis.length>1){
     let d='';vis.forEach((p,i)=>{d+=(i?'L':'M')+X(Math.max(x0,Math.min(x1,p[0])))+' '+Y(p[1]);});
     g+=`<path d="${d}" fill="none" style="stroke:${c.col}" stroke-width="2" stroke-linejoin="round"/>`;
   }else g+=`<text x="${W/2}" y="${H/2}" text-anchor="middle" style="fill:var(--muted);font-size:13px">No minute data in this view</text>`;
-  DATA.marks.forEach(m=>{
-    if(m.ts<x0||m.ts>x1)return;
+  mk.forEach(m=>{
+    const ty=H-mb+17-0+m._l*18-maxL*0;
     g+=`<line x1="${X(m.ts)}" x2="${X(m.ts)}" y1="${mt}" y2="${mt+ph}" style="stroke:var(--gold)" stroke-width="1.5" stroke-dasharray="4 3"/>`+
-       `<rect x="${X(m.ts)-19}" y="${H-mb+17}" width="38" height="16" rx="4" style="fill:var(--gold)"/><text x="${X(m.ts)}" y="${H-mb+29}" text-anchor="middle" style="fill:#1a1405;font-size:11px;font-weight:700">${Math.round(m.pct)}%</text>`;
+       `<rect x="${X(m.ts)-19}" y="${mt+ph+17+m._l*18}" width="38" height="16" rx="4" style="fill:var(--gold)"/><text x="${X(m.ts)}" y="${mt+ph+29+m._l*18}" text-anchor="middle" style="fill:#1a1405;font-size:11px;font-weight:700">${Math.round(m.pct)}%</text>`;
   });
   if(CUR!=null&&CUR>=x0&&CUR<=x1){
     let best=null;s.forEach(p=>{if(best==null||Math.abs(p[0]-CUR)<Math.abs(best[0]-CUR))best=p;});
@@ -206,7 +210,7 @@ function ensureGraphDom(){
     <select id="shPick" style="width:100%;padding:10px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--text);font-size:15px;font-family:inherit" onchange="farr22.pick(this.value)"></select>
     <div class="pair" style="margin-top:8px"><button class="chip" onclick="farr22.reset()">Reset zoom</button><button class="chip" onclick="farr22.askNow()">Enter battery %</button></div>
     <div id="shInfo" style="margin-top:8px"></div></div>`+
-    CH.map(c=>`<div class="card"><div class="label">${c.name} (${c.unit==='R'?'Rands, R50 steps':c.unit})</div><div id="${c.id}Host" style="margin-top:6px"></div></div>`).join('');
+    CH.map(c=>`<div class="card"><div class="label">${c.name} (${c.unit==='R'?'Rands, R5 steps':c.unit})</div><div id="${c.id}Host" style="margin-top:6px"></div></div>`).join('');
   sg.insertBefore(wrap,btn||null);
   CH.forEach(c=>attach($(c.id+'Host')));
 }
@@ -260,12 +264,17 @@ function paintHistShelly(){
   if(!ss.length){c.innerHTML='<div class="label">Shelly charge sessions</div><div class="small" style="margin-top:6px">No Shelly sessions yet.</div>';return;}
   c.innerHTML='<div class="label">Shelly charge sessions</div><div class="small" style="margin:4px 0 6px">Tap Graph to see power, current and cost over time.</div>'+ss.map(s=>{
     const pc=an.filter(a=>a.ts>=s.start_ms-600000&&a.ts<=s.end_ms+600000).map(a=>Math.round(a.pct)+'%').join(' → ');
-    return `<div class="row"><div>${dstamp(s.start_ms)}<div class="small">${n2(s.kwh,2)} kWh · ${dur(s.duration_s)} · R${n2(s.kwh*rate(),2)}${pc?' · '+esc(pc):''}</div></div><button class="chip" onclick="farr22.show(${s.start_ms})">Graph</button></div>`;
+    const rec=calcAll().find(c=>c.s.start_ms===s.start_ms);
+    const cl=rec&&rec.status==='calc'?'<div class="small" style="color:var(--gold)">Before % calculated: '+Math.round(rec.before)+'% to '+Math.round(rec.after)+'% ('+rec.quality+')</div>':(rec&&rec.status==='pending'?'<div class="small" style="color:var(--gold)">Charge before not recorded. It is calculated from your next Anytime log.</div>':'');
+    return `<div class="row"><div>${dstamp(s.start_ms)}<div class="small">${n2(s.kwh,2)} kWh · ${dur(s.duration_s)} · R${n2(s.kwh*rate(),2)}${pc?' · '+esc(pc):''}</div>${cl}</div><button class="chip" onclick="farr22.show(${s.start_ms})">Graph</button></div>`;
   }).join('');
 }
 
 /* ---------- battery % prompt during a Shelly session ---------- */
 let PST=lsGet('farrq.pctState',{}), promptOpen=null, promptWhy='';
+const SAMP=[];
+function noteSample(w){const now=Date.now();SAMP.push([now,+w||0]);while(SAMP.length&&now-SAMP[0][0]>6*60000)SAMP.shift();}
+function sustainedDrop(peak){const now=Date.now(),w=SAMP.filter(p=>now-p[0]<=4*60000);if(w.length<5||now-w[0][0]<3*60000)return false;return w.every(p=>p[1]<0.85*peak&&p[1]>100);}
 function ensurePromptDom(){
   if($('pctPrompt'))return;
   const m=$('meterCard'); if(!m)return;
@@ -285,12 +294,13 @@ function checkPrompt(L){
   if(!charging){if(promptOpen)hidePrompt();return;}
   const sid=se.start_ms, now=Date.now();
   if(PST.sid!==sid){PST={sid,lastAsk:0,tapered:false,peak:0};lsSet('farrq.pctState',PST);}
+  noteSample(v.watts);
   if(promptOpen)return;
   const lastPct=PCT.length?PCT[PCT.length-1].ts:0, last=Math.max(PST.lastAsk||0,lastPct>=sid-60000?lastPct:0);
   let why=null;
   if(!PST.lastAsk&&!(lastPct>=sid-60000))why='Charging has started.';
   else if(now-last>=30*60000)why='It has been 30 minutes or more since the last battery %.';
-  else if(!PST.tapered&&se.peak_w>1000&&se.duration_s>600&&v.watts<0.85*se.peak_w&&v.watts>100){PST.tapered=true;lsSet('farrq.pctState',PST);why='The charge power is dropping, the battery is nearing full.';}
+  else if(!PST.tapered&&se.peak_w>1000&&se.duration_s>600&&sustainedDrop(se.peak_w)){PST.tapered=true;lsSet('farrq.pctState',PST);why='The charge power is dropping, the battery is nearing full.';}
   if(why)showPrompt(why);
 }
 
@@ -344,10 +354,10 @@ let learnBusy=false;
 async function prefetch(){
   if(learnBusy)return; learnBusy=true; let got=0;
   try{
-    const M=buildModel();
-    for(const r of M.info){
+    const ss=sessions().filter(x=>x.kwh>=0.1&&!MINS[x.start_ms]).slice().reverse();
+    for(const r of ss){
       if(got>=6)break;
-      if(r.ins.length&&r.b&&r.a&&!MINS[r.s.start_ms]){try{await minutesFor(r.s.start_ms,r.s.end_ms,false);got++;}catch(e){break;}}
+      try{await minutesFor(r.start_ms,r.end_ms,false);got++;}catch(e){break;}
     }
   }finally{learnBusy=false;}
   return got;
@@ -380,13 +390,123 @@ function estFromInput(){
   el.innerHTML=row('Time to 100%',durMin(e.min))+row('Finish if started now',hhmm(Date.now()+e.min*60000))+row('kWh from the wall',n2(e.wall,2)+' kWh')+row('kWh into the battery',n2(e.batt,2)+' kWh')+row('Cost at home rate','R'+n2(e.cost,2))+row('Confidence',e.conf+' · '+e.n+' session'+(e.n===1?'':'s'))+`<div class="small" style="margin-top:6px">${esc(e.basis)}.</div>`;
 }
 
+
+/* ---------- 2.2.2: calculated battery % (separate, display only: it never feeds a total) ---------- */
+function effNow(){try{const e=summ(rowsFor('all')).eff;return e&&e>5&&e<40?e:14.4;}catch(x){return 14.4;}}
+let CALC=null,CALCSIG='';
+function calcAll(){
+  const key=sig()+'/'+(typeof E!=='undefined'?E.length:0);
+  if(CALC&&CALCSIG===key)return CALC;
+  const ss=sessions().filter(s=>s.kwh>=0.2&&s.duration_s>=300);
+  let src=[];try{src=[...E].sort((a,b)=>a.ts-b.ts);}catch(x){}
+  const M=buildModel(),R=ratioNow(M),eff=effNow(),out=[];
+  ss.forEach((s,i)=>{
+    const nextStart=i+1<ss.length?ss[i+1].start_ms:Infinity;
+    const added=(s.kwh/R)/pack()*100, rec={s,status:'pending',added};
+    const real=src.find(e=>e.kind==='charge'&&!e.auto&&e.ts>=s.start_ms-60000&&e.ts<=Math.min(nextStart,s.end_ms+6*3600000));
+    if(real){rec.status='real';rec.after=real.pct;rec.before=real.pct-added;rec.method='your Charge log';out.push(rec);return;}
+    const r1=src.find(e=>e.ts>=s.end_ms-180000&&e.ts<nextStart&&e.kind==='trip');
+    if(!r1){out.push(rec);return;}
+    const r0=[...src].reverse().find(e=>e.ts<=s.start_ms+180000&&e.ts<r1.ts);
+    rec.r1=r1;rec.r0=r0||null;rec.after=r1.pct;rec.before=r1.pct-added;rec.method='next Anytime log';
+    rec.gapH=(r1.ts-s.end_ms)/3600000;
+    rec.status=(rec.before<-3||rec.before>100)?'check':'calc';
+    if(r0){rec.km=Math.max(0,r1.odo-r0.odo);rec.fwd=r0.pct-rec.km*eff/pack();rec.diff=Math.abs(rec.before-rec.fwd);rec.quality=(rec.diff<=3&&rec.gapH<=14)?'good':'estimate';}
+    else rec.quality='estimate';
+    out.push(rec);
+  });
+  CALC=out;CALCSIG=key;return out;
+}
+window.farrCalcTag=function(r){
+  try{
+    if(!r||!r.auto)return '';
+    const rec=calcAll().find(x=>x.s.end_ms===r.ts); if(!rec)return '';
+    const st='<div class="small" style="color:var(--gold)">';
+    if(rec.status==='calc')return st+'Before % calculated: '+Math.round(rec.before)+'% to '+Math.round(rec.after)+'% ('+rec.quality+')</div>';
+    if(rec.status==='pending')return st+'Charge before not recorded. It is calculated from your next Anytime log.</div>';
+    if(rec.status==='check')return st+'Before % could not be calculated. Check your readings.</div>';
+  }catch(e){}
+  return '';
+};
+
+/* ---------- 2.2.2: data for the PDF report pages ---------- */
+function nowKwhAt(pts,ts){return cumKwh(pts,ts);}
+function reportData(cut){
+  const M=buildModel(),R=ratioNow(M),calc=calcAll();
+  const ss=sessions().filter(x=>x.end_ms>=(cut||0)&&x.kwh>=0.1).sort((a,b)=>a.start_ms-b.start_ms);
+  const items=ss.map(x=>{
+    const mc=MINS[x.start_ms], pts=mc?mc.pts:null;
+    const marks=PCT.filter(p=>p.ts>=x.start_ms-600000&&p.ts<=x.end_ms+600000);
+    const batt=x.kwh/R, lossK=x.kwh-batt;
+    let avgA=null,peakA=null;
+    if(pts&&pts.length){let sa=0,n=0;pts.forEach(p=>{if(p[1]>100){sa+=p[2];n++;}peakA=Math.max(peakA||0,p[2]);});avgA=n?sa/n:null;}
+    return {s:x,pts,marks,rec:calc.find(c=>c.s.start_ms===x.start_ms)||null,batt,lossK,lossR:lossK*rate(),cost:x.kwh*rate(),avgA,peakA,
+      lossW:x.duration_s>0?lossK*3600000/x.duration_s:0};
+  });
+  const est=[50,60,70,80,85,90,95,98].map(p=>Object.assign({p},remaining(p,M.typW)));
+  let al=[];try{al=((syncc('alerts')||{}).alerts||[]).filter(a=>!a.demo&&a.ts>=(cut||0));}catch(e){}
+  return {M,R,calc,items,est,pct:PCT.filter(p=>p.ts>=(cut||0)),alerts:al,typW:M.typW,conf:conf(M.n)};
+}
+async function prepareReport(cut){
+  const ss=sessions(true).filter(x=>x.end_ms>=(cut||0)&&x.kwh>=0.1&&!MINS[x.start_ms]).slice(-25);
+  for(const x of ss){
+    try{await Promise.race([minutesFor(x.start_ms,x.end_ms,false),new Promise((_,rej)=>setTimeout(()=>rej(new Error('slow')),8000))]);}
+    catch(e){break;}
+  }
+}
+
+/* ---------- 2.2.2: extra detail copied to the Google Sheet (only when the new script is in place) ---------- */
+function setSig(){try{return [S.rateHome,S.rateStation,S.rateSolar,S.loss,S.pack,S.claim,S.petrol,S.compare,S.carPrice].join('|');}catch(e){return '';}}
+function sheetExtra(){
+  const M=buildModel(),R=ratioNow(M),calc=calcAll(),ss=sessions(true).slice(-300);
+  const iso=ts=>ts||0;
+  // settings log: a row each time a rate or car setting changes
+  let log=lsGet('farrq.setLog',[]);const sg=setSig();
+  if(sg&&(!log.length||log[log.length-1].sig!==sg)){log.push({ts:Date.now(),sig:sg,v:[S.rateHome,S.rateStation,S.rateSolar,S.loss,S.pack,S.claim,S.petrol,S.compare,S.carPrice]});log=log.slice(-60);lsSet('farrq.setLog',log);}
+  const sent=lsGet('farrq.minSent',[]);
+  const detail=ss.map(x=>{
+    const rec=calc.find(c=>c.s.start_ms===x.start_ms), batt=x.kwh/R, mc=MINS[x.start_ms];
+    let avgA='',peakA='';if(mc&&mc.pts.length){let sa=0,n=0,pk=0;mc.pts.forEach(p=>{if(p[1]>100){sa+=p[2];n++;}pk=Math.max(pk,p[2]);});avgA=n?+(sa/n).toFixed(2):'';peakA=+pk.toFixed(2);}
+    const b=rec&&rec.before!=null?Math.round(rec.before*10)/10:'', a=rec&&rec.after!=null?Math.round(rec.after*10)/10:'';
+    return {start:x.start_ms,end:x.end_ms,min:Math.round(x.duration_s/60),wall:+(+x.kwh).toFixed(3),batt:+batt.toFixed(3),cost:+(x.kwh*rate()).toFixed(2),
+      peakW:Math.round(x.peak_w||0),avgW:Math.round(x.avg_w||0),avgA,peakA,why:x.end_reason||'',before:b,after:a,
+      src:rec?(rec.status==='real'?'Charge log':rec.status==='calc'?'Calculated ('+rec.quality+')':rec.status==='check'?'Check readings':'Not recorded yet'):'',
+      lossK:+(x.kwh-batt).toFixed(3),lossR:+((x.kwh-batt)*rate()).toFixed(2),rate:rate()};
+  });
+  const calcRows=calc.map(c=>({start:c.s.start_ms,end:c.s.end_ms,wall:+(+c.s.kwh).toFixed(3),added:+c.added.toFixed(1),
+    before:c.before==null?'':+c.before.toFixed(1),after:c.after==null?'':+c.after.toFixed(1),status:c.status,method:c.method||'',quality:c.quality||'',
+    laterAt:c.r1?c.r1.ts:0,laterOdo:c.r1?c.r1.odo:'',earlierAt:c.r0?c.r0.ts:0,earlierPct:c.r0?c.r0.pct:'',earlierOdo:c.r0?c.r0.odo:'',
+    fwd:c.fwd==null?'':+c.fwd.toFixed(1),diff:c.diff==null?'':+c.diff.toFixed(1)}));
+  const minutes=[];let rows=0;
+  ss.forEach(x=>{const mc=MINS[x.start_ms];if(!mc||sent.includes(x.start_ms)||rows>1500)return;
+    let k=0;const out=mc.pts.map(p=>{k+=p[1]/60000;return [p[0],p[1],p[2],p[3],+k.toFixed(4),+(k*rate()).toFixed(3)];});
+    minutes.push({start:x.start_ms,rows:out});rows+=out.length;});
+  const day=new Date();day.setHours(0,0,0,0);
+  const est=[50,60,70,80,90,95].map(p=>remaining(p,M.typW));
+  const estRow={date:day.getTime(),stored:M.total,used:M.n,conf:conf(M.n),ratio:+R.toFixed(3),loss:+((R-1)*100).toFixed(1),src:M.ratio!=null?'measured':'setting',taper:M.taper.length,
+    vals:est.reduce((a,e)=>a.concat([Math.round(e.min),+e.wall.toFixed(2),+e.cost.toFixed(2)]),[])};
+  const daily={};
+  try{rowsFor('all').forEach(r=>{const d=new Date(r.ts);d.setHours(0,0,0,0);const k=d.getTime();const o=daily[k]||(daily[k]={date:k,trips:0,km:0,used:0,charges:0,wall:0,cost:0,shelly:0});
+    if(r.type==='trip'&&r.km>0){o.trips++;o.km+=r.km;if(r.countEff)o.used+=r.used;}if(r.type==='charge'){o.charges++;o.wall+=r.wall;o.cost+=r.cost;}});}catch(e){}
+  ss.forEach(x=>{const d=new Date(x.end_ms);d.setHours(0,0,0,0);const o=daily[d.getTime()]||(daily[d.getTime()]={date:d.getTime(),trips:0,km:0,used:0,charges:0,wall:0,cost:0,shelly:0});o.shelly+=x.kwh;});
+  const pk=(S.compare/100*S.petrol);
+  const dailyRows=Object.values(daily).sort((a,b)=>a.date-b.date).slice(-120).map(o=>({date:o.date,trips:o.trips,km:+o.km.toFixed(1),used:+o.used.toFixed(2),charges:o.charges,wall:+o.wall.toFixed(2),cost:+o.cost.toFixed(2),
+    shelly:+o.shelly.toFixed(2),petrol:+(o.km*pk).toFixed(2),saving:o.km>0&&o.wall>0?+(o.km*pk-o.cost).toFixed(2):''}));
+  let al=[];try{al=((syncc('alerts')||{}).alerts||[]).filter(a=>!a.demo).slice(0,200).map(a=>({ts:a.ts,type:a.type,level:a.level,text:a.text}));}catch(e){}
+  return {detail,calc:calcRows,pct:PCT.map(p=>{const x=ss.find(z=>p.ts>=z.start_ms-600000&&p.ts<=z.end_ms+600000);return {ts:p.ts,pct:p.pct,src:p.src,kwh:p.kwh==null?'':p.kwh,session:x?x.start_ms:0};}),
+    minutes,estimates:[estRow],daily:dailyRows,alerts:al,settings:log.map(l=>({ts:l.ts,v:l.v}))};
+}
+function sheetSent(extra){
+  try{if(!extra||!extra.minutes)return;const sent=lsGet('farrq.minSent',[]);extra.minutes.forEach(m=>{if(!sent.includes(m.start))sent.push(m.start);});lsSet('farrq.minSent',sent.slice(-400));}catch(e){}
+}
+
 /* ---------- wiring ---------- */
 const farr22={
   onLive(L){
     window.__L22=L;
     try{ensurePromptDom();checkPrompt(L);}catch(e){}
     try{paintEst();}catch(e){}
-    try{if(L&&L.online&&!farr22._pf){farr22._pf=true;setTimeout(()=>prefetch().catch(()=>{}),4000);}}catch(e){}
+    try{if(L&&L.online&&Date.now()-(farr22._pf||0)>5*60000){farr22._pf=Date.now();setTimeout(()=>prefetch().catch(()=>{}),4000);}}catch(e){}
   },
   savePct(){
     const x=parseFloat(($('pctIn')||{}).value);
@@ -418,7 +538,7 @@ const farr22={
   reset(){if(FULL){VIEW=[FULL[0],FULL[1]];VIEW._k=SEL?SEL.start+(SEL.open?'o':''):'';CUR=null;drawAll();}},
   est:estFromInput,
   fetch(){const el=$('lnFetch');if(el)el.textContent='Fetching from the Shelly…';prefetch().then(n=>{MODEL=null;paintLearn();say(n?'Fetched '+n+' session'+(n>1?'s':''):'Nothing new to fetch');}).catch(e=>{if(el)el.textContent='Could not reach the Shelly: '+e.message;});},
-  model:buildModel,remaining:remaining,anchors:anchors,addPct:addPct
+  model:buildModel,remaining:remaining,anchors:anchors,addPct:addPct,calcAll:calcAll,reportData:reportData,prepareReport:prepareReport,sheetExtra:sheetExtra,sheetSent:sheetSent
 };
 window.farr22=farr22;
 const prevOn=window.farrOnScreen;

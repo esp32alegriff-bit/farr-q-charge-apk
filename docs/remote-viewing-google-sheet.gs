@@ -1,5 +1,5 @@
 /*
- FARR Q Charge - "View from anywhere"
+ FARR Q Charge - "View from anywhere"  (script 2.2.2)
  A copy of the charge log in YOUR Google Sheet. The phones send to it; you open the Sheet from any country.
 
  ONE-TIME SETUP (about 5 minutes)
@@ -23,18 +23,28 @@
  - Only someone with the address AND the password can add data. Nobody can read the Sheet unless you share it.
  - Rows are matched by time, so sending twice never doubles anything, and both phones merge into one log.
  - Deleting an entry in the app does not delete it from the Sheet. Delete the row in the Sheet too.
+ - 2.2.2 adds tabs: Charge detail, Battery % readings, Calculated %, Minute data, Estimates, Daily totals, Alerts, Settings log.
+   Old apps keep working; the app sends the extra data only once this script is in place.
  - If you change this script later: Deploy > Manage deployments > Edit > Version: New version > Deploy.
 */
 
 var PASSWORD = 'CHANGE-ME';
-var SCRIPT_VERSION = '2.1.2';   // shown in the app and in the Summary and Phones tabs
+var SCRIPT_VERSION = '2.2.2';   // shown in the app and in the Summary and Phones tabs
 
 var TABS = {
   charges:  {name: 'Charge log',     head: ['When', 'Where', 'Battery %', 'Stored kWh', 'Wall kWh', 'Cost R', 'Measured', 'Auto (no charge log)', 'Phone', 'Updated'], key: [0, 1]},
   trips:    {name: 'Trips',          head: ['When', 'Km', 'kWh used', 'kWh/100km', 'Odometer', 'Battery %', 'Phone', 'Updated'], key: [0]},
   readings: {name: 'Readings',       head: ['When', 'Type', 'Odometer', 'Battery %', 'Where', 'Car km', 'Phone', 'Updated'], key: [0, 1], fillBlanksOnly: true},
   phones:   {name: 'Phones',         head: ['Phone', 'App version', 'Last sync', 'Entries', 'Sheet script'], key: [0]},
-  sessions: {name: 'Meter sessions', head: ['Started', 'Ended', 'kWh', 'Minutes', 'Peak W', 'Why it ended', 'Updated'], key: [0]}
+  sessions: {name: 'Meter sessions', head: ['Started', 'Ended', 'kWh', 'Minutes', 'Peak W', 'Why it ended', 'Updated'], key: [0]},
+  detail:   {name: 'Charge detail',  head: ['Started', 'Ended', 'Minutes', 'Wall kWh', 'Battery kWh', 'Cost R', 'Peak W', 'Avg W', 'Avg A', 'Peak A', 'Why it ended', 'Before %', 'After %', 'How % is known', 'Lost kWh', 'Lost R', 'Rate R/kWh', 'Updated'], key: [0]},
+  pct:      {name: 'Battery % readings', head: ['When', 'Battery %', 'Source', 'kWh delivered then', 'Charge started', 'Updated'], key: [0]},
+  calc:     {name: 'Calculated %',   head: ['Charge started', 'Charge ended', 'Wall kWh', 'Added %', 'Before %', 'After %', 'Status', 'Method', 'Quality', 'Later reading at', 'Later odometer', 'Earlier reading at', 'Earlier %', 'Earlier odometer', 'Forward check %', 'Difference', 'Updated'], key: [0]},
+  minutes:  {name: 'Minute data',    head: ['Minute', 'Charge started', 'Watts', 'Amps', 'Max W', 'Cumulative kWh', 'Cumulative R'], key: [0, 1]},
+  est:      {name: 'Estimates',      head: ['Date', 'Sessions stored', 'Sessions used', 'Confidence', 'Ratio', 'Loss %', 'Ratio from', 'Taper charges', '50%: min', '50%: kWh', '50%: R', '60%: min', '60%: kWh', '60%: R', '70%: min', '70%: kWh', '70%: R', '80%: min', '80%: kWh', '80%: R', '90%: min', '90%: kWh', '90%: R', '95%: min', '95%: kWh', '95%: R'], key: [0]},
+  daily:    {name: 'Daily totals',   head: ['Date', 'Trips', 'Km', 'kWh used', 'Charges', 'Wall kWh', 'Cost R', 'Shelly kWh', 'Petrol cost R', 'Saving R', 'Updated'], key: [0]},
+  alerts:   {name: 'Alerts',         head: ['When', 'Type', 'Level', 'What happened'], key: [0, 1, 3]},
+  settings: {name: 'Settings log',   head: ['Changed', 'Home R/kWh', 'Station R/kWh', 'Solar R/kWh', 'Loss %', 'Pack kWh', 'Car claim', 'Petrol R/L', 'Compare L/100km', 'Car price R'], key: [0]}
 };
 
 function doPost(e) {
@@ -65,6 +75,9 @@ function doPost(e) {
         return [d_(s.start_ms || s.end_ms), d_(s.end_ms), s.kwh, s.duration_s ? Math.round(s.duration_s / 60) : '', s.peak_w, s.end_reason || '', now];
       }));
     }
+    if (p.kind === 'app' && p.extra) {
+      try { n += extra_(ss, p.extra, now); } catch (x2) { /* extra tabs never stop the main sync */ }
+    }
     if (p.kind === 'meter' && p.live) live_(ss, p.live, now);
     var extra = {script: SCRIPT_VERSION};
     if (p.kind === 'app' && p.wantReadings) extra.readings = readings_(ss);
@@ -74,6 +87,43 @@ function doPost(e) {
   } finally {
     try { lock.releaseLock(); } catch (x) {}
   }
+}
+
+function extra_(ss, x, now) {
+  var n = 0;
+  n += upsert_(ss, TABS.detail, (x.detail || []).map(function (r) {
+    return [d_(r.start), d_(r.end), r.min, r.wall, r.batt, r.cost, r.peakW, r.avgW, r.avgA, r.peakA, r.why, r.before, r.after, r.src, r.lossK, r.lossR, r.rate, now];
+  }));
+  n += upsert_(ss, TABS.pct, (x.pct || []).map(function (r) {
+    return [d_(r.ts), r.pct, r.src || '', r.kwh, d_(r.session), now];
+  }));
+  n += upsert_(ss, TABS.calc, (x.calc || []).map(function (r) {
+    return [d_(r.start), d_(r.end), r.wall, r.added, r.before, r.after, r.status, r.method, r.quality, d_(r.laterAt), r.laterOdo, d_(r.earlierAt), r.earlierPct, r.earlierOdo, r.fwd, r.diff, now];
+  }));
+  n += upsert_(ss, TABS.est, (x.estimates || []).map(function (r) {
+    return [d_(r.date), r.stored, r.used, r.conf, r.ratio, r.loss, r.src, r.taper].concat(r.vals || []);
+  }));
+  n += upsert_(ss, TABS.daily, (x.daily || []).map(function (r) {
+    return [d_(r.date), r.trips, r.km, r.used, r.charges, r.wall, r.cost, r.shelly, r.petrol, r.saving, now];
+  }));
+  n += upsert_(ss, TABS.alerts, (x.alerts || []).map(function (r) {
+    return [d_(r.ts), r.type || '', r.level || '', r.text || ''];
+  }));
+  n += upsert_(ss, TABS.settings, (x.settings || []).map(function (r) {
+    return [d_(r.ts)].concat(r.v || []);
+  }));
+  // minute data: appended once per charge (a charge already in the tab is skipped)
+  if (x.minutes && x.minutes.length) {
+    var sh = sheet_(ss, TABS.minutes), have = {}, last = sh.getLastRow();
+    if (last > 1) sh.getRange(2, 2, last - 1, 1).getValues().forEach(function (v) { have[v[0] instanceof Date ? v[0].getTime() : String(v[0])] = 1; });
+    var add = [];
+    x.minutes.forEach(function (m) {
+      if (have[+m.start]) return;
+      (m.rows || []).forEach(function (r) { add.push([d_(r[0]), d_(m.start), r[1], r[2], r[3], r[4], r[5]]); });
+    });
+    if (add.length) { sh.getRange(sh.getLastRow() + 1, 1, add.length, 7).setValues(add); n += add.length; }
+  }
+  return n;
 }
 
 function doGet() { return out_(true, 'FARR Q Charge sheet is running. Use the app to send data.'); }

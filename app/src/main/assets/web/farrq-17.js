@@ -5,7 +5,7 @@
 (function(){
 'use strict';
 const N=window.FarrNative||null;
-window.FARR_VER='Ver_FarrQ_2.2.1';
+window.FARR_VER='Ver_FarrQ_2.2.2';
 window.FARR_APP_URL='https://github.com/esp32alegriff-bit/farr-q-charge-apk/releases/latest';
 
 /* ---------- bridge ---------- */
@@ -233,7 +233,7 @@ function paintSessions(){
 }
 async function pushMeter(obj,msgEl,okText){
   try{const c=await call('meterConfigSet',obj);CFG=c||CFG;if(LIVE&&LIVE.live&&obj.mode)LIVE.live.mode=obj.mode;if(msgEl)$(msgEl).textContent=okText||'Saved to the meter.';say(okText||'Saved to the meter');paintModeChips();return true;}
-  catch(e){const t='Could not reach the meter: '+e.message;if(msgEl)$(msgEl).textContent=t;say(t);return false;}
+  catch(e){const t=(/^AUTO is not available/.test(e.message)?'':'Could not reach the meter: ')+e.message;if(msgEl)$(msgEl).textContent=t;say(t);return false;}
 }
 window.farrCalMatch=async function(){
   const ref=parseFloat($('calRef').value), v=LIVE&&LIVE.live;
@@ -553,6 +553,8 @@ window.farrAutoRows=function(src){
 
 /* ---------- 1.10: view from anywhere (a copy of the log in the owner's own Google Sheet) ---------- */
 const RM_SCRIPT='2.1.2';
+function rmOk(v){return v==='2.1.2'||v==='2.2.2';}   /* 2.2.2: either Sheet script is fine - no warnings */
+function rmNew(v){return String(v||'')>='2.2.2';}
 let rmTimer=null, rmLast=0, rmBusy=false, rmSaveOrig=null, rmPending=null;
 /* 2.1.4: the last Sheet sync result, kept so the report can show the Sheet status */
 function rmInfoGet(){try{return JSON.parse(localStorage.getItem('farrq.rmInfo')||'{}');}catch(e){return {};}}
@@ -578,6 +580,11 @@ function rmPayload(){
     trips:rows.filter(r=>r.type==='trip').map(r=>({ts:r.ts,km:+r.km.toFixed(1),kwh:r.countEff?+r.used.toFixed(2):'',cons:r.countEff?+r.cons.toFixed(1):'',odo:r.odo,pct:r.pct})),
     summary:{last7:sm(s7),last30:sm(s30),lastReading:{ts:L.ts||0,odo:L.odo||0,pct:L.pct==null?0:L.pct}},
     sessions:(MS||[]).slice(-300)};
+}
+function rmPayloadX(){
+  const pl=rmPayload();
+  try{if(rmNew(rmInfoGet().script)&&window.farr22&&farr22.sheetExtra)pl.extra=farr22.sheetExtra();}catch(e){}
+  return pl;
 }
 
 /* ---------- 2.1: entries typed on the other phone arrive here (and ours go there) ---------- */
@@ -621,12 +628,13 @@ async function rmSend(manual){
   if(rmBusy)return; rmBusy=true;
   if(manual)setRm('Sending…');
   try{
-    const pl=rmPayload();const r=await call('remotePush',pl);rmLast=Date.now();
+    const pl=rmPayloadX();const r=await call('remotePush',pl);rmLast=Date.now();
+    try{if(pl.extra&&window.farr22&&farr22.sheetSent)farr22.sheetSent(pl.extra);}catch(e){}
     try{if(rmPending){const old=JSON.parse(localStorage.getItem('farrq.rmAuto')||'[]').filter(t=>!rmPending.gone.includes(t));localStorage.setItem('farrq.rmAuto',JSON.stringify([...new Set(old.concat(rmPending.sent))].slice(-500)));}}catch(e){}
     let note='', mm={added:0,filled:0};
     try{const m=rmMerge(r.readings);mm=m;if(m.added||m.filled)note=' · '+m.added+' new from the other phone'+(m.filled?', '+m.filled+' filled in':'');if(m.added||m.filled)say('Updated from the other phone');}catch(e){note=' · could not read the other phone ('+e.message+')';}
-    const sv=r.script?('Sheet script '+r.script+(r.script===RM_SCRIPT?' (matches)':' - paste the new script and redeploy')):'Sheet script is OLD - paste the new script and redeploy';
-    rmInfoSave({tryTs:Date.now(),tryOk:true,err:'',okTs:Date.now(),msg:r.message||'ok',script:r.script||'',match:r.script===RM_SCRIPT,added:mm.added,filled:mm.filled});
+    const sv=r.script?('Sheet script '+r.script+(rmOk(r.script)?' (matches)':' - paste the new script and redeploy')):'Sheet script is OLD - paste the new script and redeploy';
+    rmInfoSave({tryTs:Date.now(),tryOk:true,err:'',okTs:Date.now(),msg:r.message||'ok',script:r.script||'',match:rmOk(r.script),added:mm.added,filled:mm.filled});
     setRm('Synced '+ago(Date.now()).replace('0 s ago','just now')+': '+(r.message||'ok')+note+'\nApp '+(window.FARR_VER||'')+' · '+sv);
   }
   catch(e){rmInfoSave({tryTs:Date.now(),tryOk:false,err:String(e&&e.message||e)});setRm('Not sent: '+e.message);}

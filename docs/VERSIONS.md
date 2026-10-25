@@ -18,3 +18,4 @@ Where to see it
 | Ver_FarrQ_2.1.7 | 2.1.2 (unchanged) | Relay board: waits 5 to 6 s and retries once before saying Not reachable; asks every 5 s instead of 3 s |
 | Ver_FarrQ_2.2 | 2.1.2 (unchanged) | Shelly charge graphs (power, current, cost, pinch and drag zoom), battery % prompt during a Shelly session, History session picker, Learning and estimates page, live charge estimate on Home |
 | Ver_FarrQ_2.2.1 | 2.1.2 (unchanged) | App name FARRUSCO-Q CHARGE; Share preview shows petrol cost and Rand saving vs a 8.5 L/100 km car |
+| Ver_FarrQ_2.2.2 | 2.2.2 (new, optional; 2.1.2 still works) | Cost graph in R5 steps; no overlapping % tags; charge graphs and 8 new detail pages in the report; calculated battery % (separate); sustained power-drop prompt; exact background checks; clearer AUTO wording; new Sheet tabs |
