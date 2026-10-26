@@ -9,7 +9,7 @@ import org.json.JSONObject;
 
 /** Everything the 1.7 layer keeps on the phone (the 1.6 screens keep their own data in WebView localStorage). */
 final class Store {
-    static final String APP_VERSION = "Ver_FarrQ_2.2.2_Test";
+    static final String APP_VERSION = "Ver_FarrQ_2.2.3";
     static final int MAX_SESSIONS = 5000;
     static final int MAX_ALERTS = 1000;
 
@@ -134,5 +134,27 @@ final class Store {
             putArray(c, key, have);
         }
         return added;
+    }
+
+    /** 2.2.3: sets one field on a stored session (found by its start time), for example the full-charge verdict. */
+    static synchronized void setSessionField(Context c, String key, long startMs, String field, String value) {
+        JSONArray have = array(c, key);
+        boolean hit = false;
+        for (int i = 0; i < have.length(); i++) {
+            JSONObject s = have.optJSONObject(i);
+            if (s != null && s.optLong("start_ms") == startMs) { try { s.put(field, value); hit = true; } catch (JSONException ignored) {} }
+        }
+        if (hit) putArray(c, key, have);
+    }
+
+    /** 2.2.3: copies a full-charge verdict onto a stored session that has none yet (used by the pasted backup). */
+    static synchronized void setSessionFieldIfMissing(Context c, String key, long startMs, String field, String value) {
+        JSONArray have = array(c, key);
+        boolean hit = false;
+        for (int i = 0; i < have.length(); i++) {
+            JSONObject s = have.optJSONObject(i);
+            if (s != null && s.optLong("start_ms") == startMs && !s.has(field)) { try { s.put(field, value); hit = true; } catch (JSONException ignored) {} }
+        }
+        if (hit) putArray(c, key, have);
     }
 }

@@ -117,6 +117,7 @@ final class Bridge {
                 if (obj.optBoolean("demo")) return;
                 JSONArray a = new JSONArray(); a.put(obj);
                 Store.addSessions(c, "sessions", a, obj.optString("store_id", null), false);
+                if (obj.has("full")) Store.setSessionFieldIfMissing(c, "sessions", obj.optLong("start_ms"), "full", obj.optString("full"));
             } else if ("alert".equals(kind)) {
                 JSONArray have = Store.array(c, "alerts");
                 for (int i = 0; i < have.length(); i++) {
@@ -184,6 +185,9 @@ final class Bridge {
             }
             case "remotePush": return Remote.push(c, a);
             case "relayStatus": return Relay.status(c);
+            case "relayDetails": return Relay.details(c);
+            case "displayStatus": return Display.status(c);
+            case "displayStart": return Display.start(c, a.optInt("pct", -1));
             case "relay": return Relay.command(c, a.optString("path"));
             case "demo": return demo(a.optBoolean("on"));
             case "notifPermission": act.runOnUiThread(act::askNotifications); return new JSONObject();

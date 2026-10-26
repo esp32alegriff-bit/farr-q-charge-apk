@@ -5,7 +5,7 @@
 (function(){
 'use strict';
 const N=window.FarrNative||null;
-window.FARR_VER='Ver_FarrQ_2.2.2_Test';
+window.FARR_VER='Ver_FarrQ_2.2.3';
 window.FARR_APP_URL='https://github.com/esp32alegriff-bit/farr-q-charge-apk/releases/latest';
 
 /* ---------- bridge ---------- */
@@ -114,12 +114,17 @@ window.farrBackupExtra=function(){
   if(!N)return [];
   const out=[], row=(ts,kind,payload)=>{const d=new Date(ts);out.push([d.toLocaleDateString('en-ZA'),d.toLocaleTimeString('en-ZA'),kind,'','',b64e(payload),'',ts].join(','));};
   MS.forEach(x=>row(x.start_ms||x.end_ms,'meter',x));
+  try{if(window.farr22)farr22.backupRows().forEach(r=>row(r.ts,r.kind,r.obj));}catch(e){}
   const a=sync('alerts'); ((a&&a.alerts)||[]).filter(x=>!x.demo).slice(0,300).forEach(x=>row(x.ts,'alert',x));
   const c=sync('config'); if(c){const k=Object.assign({},c);delete k.relayToken;delete k.mqttPass;delete k.demo;delete k.remoteUrl;delete k.remoteToken;delete k.remoteName;delete k.remoteLastOk;delete k.remoteLastMsg;row(Date.now(),'settings17',k);}
   return out;
 };
 window.farrImportExtra=function(c){
   const kind=c[2];
+  if(kind==='pctread'||kind==='fsettings'){
+    try{window.__fsetTs=parseFloat(c[7])||0;if(window.farr22)farr22.importRow(kind,b64d(c[5]));if(kind==='fsettings'&&window.__fsetChanged){window.__fsetChanged=false;try{save();}catch(e){}}}catch(e){}
+    return true;
+  }
   if(kind!=='meter'&&kind!=='alert'&&kind!=='settings17')return false;
   try{sync('importExtra',{kind,obj:b64d(c[5])});}catch(e){}
   if(kind==='meter')loadMS();
@@ -472,8 +477,62 @@ async function renderInfo(){
   const el=$('infoBody'); if(!el)return;
   paintDemo();
   el.innerHTML=infoHTML();
-  try{const [d,r]=await Promise.allSettled([call('meterDiag'),call('relayStatus')]);DIAG={meter:d.status==='fulfilled'?d.value:{error:d.reason.message},relay:r.status==='fulfilled'?r.value:{connected:false,message:r.reason.message}};}catch(e){}
+  try{const [d,r,rd,dp]=await Promise.allSettled([call('meterDiag'),call('relayStatus'),call('relayDetails'),call('displayStatus')]);DIAG={meter:d.status==='fulfilled'?d.value:{error:d.reason.message},relay:r.status==='fulfilled'?r.value:{connected:false,message:r.reason.message},relayDet:rd.status==='fulfilled'?rd.value:{reachable:false,message:'Relay board not reachable'},display:dp.status==='fulfilled'?dp.value:{reachable:false,message:'Display not reachable'}};}catch(e){}
   if(screen==='info')el.innerHTML=infoHTML();
+  /* 2.2.2.1: while this page is open, refresh the relay board and display details every 8 s (read-only) */
+  clearTimeout(window.__infoTimer);
+  if(screen==='info')window.__infoTimer=setTimeout(()=>{if(screen==='info')renderInfo();},8000);
+}
+/* 2.2.2.1: relay board details (4 LED dots, radio, reset) and display details. Details page only, never on Home. */
+const RST_WORDS={0:'unknown',1:'power on',2:'reset pin',3:'software restart',4:'crash',5:'watchdog',6:'watchdog',7:'watchdog',8:'deep sleep',9:'brownout (weak supply)',10:'SDIO'};
+const RST_BAD=[4,5,6,7,9];
+function dot(on,col,label){
+  const c=on?col:'rgba(128,128,128,.35)';
+  return `<span style="display:inline-flex;flex-direction:column;align-items:center;margin:0 10px;font-size:11px"><span style="width:22px;height:22px;border-radius:50%;background:${c};box-shadow:${on?'0 0 8px '+col:'none'};display:block;margin-bottom:4px"></span>${esc(label)}</span>`;
+}
+function relayDetHTML(){
+  const j=DIAG&&DIAG.relayDet;
+  if(!j)return section('Relay board, details','<div class="small">Loading…</div>');
+  if(!j.reachable)return section('Relay board, details','<div class="small">'+esc(j.message||'Not reachable')+'</div>'+R('Address',esc(j.address||'')));
+  const has=j.led_eskom_green!==undefined;
+  let b='';
+  b+=R('Eskom relay (relay 1)',j.relay1_on?'ON':'OFF')+R('EV relay (relay 2)',j.relay2_on?'ON':'OFF');
+  if(has){
+    b+='<div style="display:flex;justify-content:center;padding:10px 0 4px"><div style="text-align:center"><div class="small" style="margin-bottom:6px">ESKOM</div>'+dot(j.led_eskom_green==1,'#2fd37a','green')+dot(j.led_eskom_red==1,'#ff4d4d','red')+'</div><div style="text-align:center"><div class="small" style="margin-bottom:6px">EV</div>'+dot(j.led_ev_green==1,'#2fd37a','green')+dot(j.led_ev_red==1,'#ff4d4d','red')+'</div></div>';
+    const exp1=j.relay1_on?[1,0]:[0,1], exp2=j.relay2_on?[1,0]:[0,1];
+    const match=j.led_eskom_green==exp1[0]&&j.led_eskom_red==exp1[1]&&j.led_ev_green==exp2[0]&&j.led_ev_red==exp2[1];
+    b+=R('LEDs match the relays',match?'yes':'no')+R('LED corrections by the board',esc(j.led_fixes));
+  } else b+='<div class="small" style="margin-top:6px">LED details need relay board firmware 2.2 (not on the board yet).</div>';
+  if(j.reset_reason!==undefined){const rr=+j.reset_reason;b+=R('Last restart',esc(RST_WORDS[rr]||('code '+rr))+(RST_BAD.includes(rr)?' (unexpected)':''));}
+  if(j.uptime_s!==undefined)b+=R('Uptime',esc(fmtUp(j.uptime_s)));
+  if(j.wifi_rssi!==undefined)b+=R('Wi-Fi signal',esc(j.wifi_rssi)+' dBm ('+rssiWord(j.wifi_rssi)+') · channel '+esc(j.wifi_channel));
+  if(j.free_heap!==undefined)b+=R('Free memory',Math.round(j.free_heap/1024)+' kB (lowest '+Math.round((j.min_free_heap||0)/1024)+' kB)');
+  if(j.wifi_connects!==undefined)b+=R('Wi-Fi connects · drops',esc(j.wifi_connects)+' · '+esc(j.wifi_disconnects));
+  if(j.espnow_age_ms_waveshare!==undefined)b+=R('Waveshare panel',j.espnow_age_ms_waveshare<0?'not heard':'heard '+Math.round(j.espnow_age_ms_waveshare/1000)+' s ago · '+esc(j.espnow_rssi_waveshare)+' dBm')+R('CrowPanel',j.espnow_age_ms_crowpanel<0?'not heard':'heard '+Math.round(j.espnow_age_ms_crowpanel/1000)+' s ago · '+esc(j.espnow_rssi_crowpanel)+' dBm');
+  if(j.monitor_tx_ok!==undefined)b+=R('Home Monitor sends ok · failed',esc(j.monitor_tx_ok)+' · '+esc(j.monitor_tx_fail));
+  if(j.fw_diag)b+=R('Firmware',esc(j.fw_diag));
+  b+=R('Checked',ago(j.checkedAt));
+  return section('Relay board, details',b);
+}
+function fmtUp(s){s=+s||0;const d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);return (d?d+' d ':'')+(d||h?h+' h ':'')+m+' min';}
+function rssiWord(r){r=+r;return r>-60?'good':r>-70?'fair':r>-80?'weak':'poor';}
+function displayHTML(){
+  const j=DIAG&&DIAG.display;
+  if(!j)return section('Display (dot matrix)','<div class="small">Loading…</div>');
+  if(!j.reachable)return section('Display (dot matrix)','<div class="small">'+esc(j.message||'Display not reachable')+'</div>'+R('Address',esc(j.address||'')));
+  const stateWord={IDLE:'idle (clock)',CHARGING:'charging',FULL:'full'}[j.state]||esc(j.state);
+  const age=v=>v<0?'no good reading':v+' s ago';
+  let b=R('Firmware',esc(j.fw))+R('Display state',stateWord)+R('Uptime',esc(fmtUp(j.uptime_s)));
+  const rr=String(j.reset_reason||'');
+  b+=R('Last restart',esc(rr.replace('_',' '))+(['crash','watchdog','brownout'].includes(rr)?' (unexpected'+(rr==='brownout'?': weak 5 V or USB supply':'')+')':''));
+  b+=R('Wi-Fi signal',esc(j.rssi)+' dBm ('+rssiWord(j.rssi)+')')+R('Address · MAC',esc(j.ip)+' · '+esc(j.mac));
+  b+=R('Data feeds',j.fault==='none'?'Shelly and relay board OK':'Quiet: '+esc(j.fault));
+  b+=R('Shelly power',(j.power_ok?esc(Math.round(j.power_w))+' W':'no fresh reading')+' · '+age(j.shelly_age_s));
+  b+=R('Shelly energy',esc(j.energy_wh)+' Wh · '+age(j.energy_age_s));
+  b+=R('EV relay as the display reads it',j.relay2===1?'ON':j.relay2===0?'OFF':'unknown')+R('Relay board read',age(j.relay_age_s));
+  b+=R('Battery estimate on the display',j.pct_known?esc(Math.round(j.pct))+'%':'--% (no start % sent yet)')+R('Time left on the display',j.minutes_left>=0?esc(j.minutes_left)+' min':'unknown');
+  b+=R('Free memory',Math.round((j.heap||0)/1024)+' kB')+R('Checked',ago(j.checkedAt));
+  return section('Display (dot matrix)',b);
 }
 function kv(o,skip){
   if(!o||typeof o!=='object')return '<div class="small">'+esc(o)+'</div>';
@@ -513,6 +572,8 @@ function infoHTML(){
   h+=section('Meter, live reading'+(LIVE&&LIVE.demo?' (DEMO)':''),L?kv(L):'<div class="small">No reading from the meter yet. Address: '+esc(c.meterUrl)+'</div>');
   h+=section('Meter, diagnostics',M?kv(M):'<div class="small">Loading…</div>');
   h+=section('Relay board',RL?kv(RL):'<div class="small">Loading…</div>');
+  h+=relayDetHTML();
+  h+=displayHTML();
   h+=section('Last 50 alerts and AUTO actions',(al.alerts||[]).slice(0,50).map(x=>R(tstamp(x.ts)+(x.demo?' · DEMO':''),esc(x.text))).join('')||'<div class="small">None.</div>');
   GUIDES.forEach(g=>{h+=section(g[0],'<ol class="small" style="padding-left:18px;margin:0">'+g[1].map(x=>'<li style="margin-bottom:6px">'+esc(x)+'</li>').join('')+'</ol>');});
   TECH.forEach(t=>{h+=section(t[0],'<div class="small">'+esc(t[1])+'</div>');});
@@ -524,7 +585,7 @@ window.farrShareDiag=function(){
   const t=['FARR Q Charge diagnostics · '+new Date().toLocaleString('en-ZA'),
     '== App ==',j(app),j({lastPoll:ago(st.lastPoll),lastSync:ago(st.lastSync),lastSeen:ago(st.lastSeen),onWifi:st.onWifi,notifAllowed:st.notifAllowed,batteryExempt:st.batteryExempt,measuredSessions:MS.length}),
     '== FARR Q settings ==',j(s1),'== Connections ==',j(c),
-    '== Meter live ==',j(L),'== Meter diag ==',j(DIAG&&DIAG.meter),'== Relay ==',j(DIAG&&DIAG.relay),
+    '== Meter live ==',j(L),'== Meter diag ==',j(DIAG&&DIAG.meter),'== Relay ==',j(DIAG&&DIAG.relay),'== Relay board details ==',j(DIAG&&DIAG.relayDet),'== Display ==',j(DIAG&&DIAG.display),
     '== Alerts (last 50) ==',(al.alerts||[]).slice(0,50).map(x=>tstamp(x.ts)+' '+(x.demo?'DEMO ':'')+x.level+': '+x.text).join('\n')].join('\n');
   if(N)N.shareText(t,'FARR Q diagnostics');
 };

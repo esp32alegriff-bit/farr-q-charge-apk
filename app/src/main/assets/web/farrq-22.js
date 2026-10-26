@@ -58,7 +58,7 @@ function cumKwh(pts,ts){let k=0;for(const p of pts){if(p[0]+60000<=ts)k+=p[1]/60
 
 /* ---------- learning ---------- */
 let MODEL=null,MODELSIG='';
-function sig(){return sessions().length+'/'+PCT.length+'/'+((typeof E!=='undefined'&&E)?E.length:0)+'/'+Object.keys(MINS).length+'/'+pack()+'/'+lossPct();}
+function sig(){return sessions().length+'/'+sessions().filter(x=>x.full).map(x=>x.full[0]).join('')+'/'+PCT.length+'/'+((typeof E!=='undefined'&&E)?E.length:0)+'/'+Object.keys(MINS).length+'/'+pack()+'/'+lossPct();}
 function buildModel(){
   const key=sig(); if(MODEL&&MODELSIG===key)return MODEL;
   const ss=sessions().filter(s=>s.kwh>=0.2&&s.duration_s>=300), an=anchors();
@@ -69,8 +69,17 @@ function buildModel(){
     let b=null,a=null;
     for(const x of an){if(x.ts<=s.start_ms+180000&&x.ts>=s.start_ms-12*3600000)b=x;}
     for(const x of an){if(x.ts>=s.end_ms-180000&&x.ts<=s.end_ms+8*3600000&&x.ts<nextStart){a=x;break;}}
+    /* 2.2.3: a charge the car ended by itself (Shelly at 0 W, both relays still ON for 5 min) counts as 100%, if the kWh fits within 5% */
+    let autoFull=null;
+    if(s.full==='full'){
+      if(a)autoFull='typed';
+      else if(b){
+        if(FULL_OK(b.pct,s.kwh)){a={ts:s.end_ms,pct:100,kwh:null,src:'auto'};autoFull='clean';}
+        else autoFull='unsure';
+      }else autoFull='nostart';
+    }
     const ins=an.filter(x=>x.ts>s.start_ms+180000&&x.ts<s.end_ms-180000);
-    const rec={s,b,a,ins};info.push(rec);
+    const rec={s,b,a,ins,autoFull};info.push(rec);
     if(b&&a&&a.pct-b.pct>=15){
       const batt=pack()*(a.pct-b.pct)/100, r=s.kwh/batt;
       if(r>=1.0&&r<=1.6){sumW+=s.kwh;sumB+=batt;ratioS.push(r);used.add(s.start_ms);}
@@ -87,6 +96,18 @@ function buildModel(){
   const typW=(()=>{const v=ss.map(x=>x.avg_w||0).filter(x=>x>300).sort((p,q)=>p-q);return v.length?v[Math.floor(v.length/2)]:2400;})();
   MODEL={n:used.size,nRatio:ratioS.length,ratio,ratioAll:sumB>0?sumW/sumB:null,taper,typW,total:ss.length,nAnch:an.length,info,builtAt:Date.now()};
   MODELSIG=key; return MODEL;
+}
+/* 2.2.3: the 5% battery check for a charge the car ended by itself (same rule as FullLogic.java) */
+const FULL_TOL=5;
+function FULL_OK(startPct,kwhWall){
+  const stored=kwhWall/(1+lossPct()/100), end=startPct+stored/pack()*100;
+  return Math.abs(end-100)<=FULL_TOL;
+}
+function fullCounts(){
+  const M=buildModel(); const c={full:0,clean:0,unsure:0,notFull:0,nostart:0};
+  sessions().forEach(s=>{if(s.full==='not_full')c.notFull++;});
+  M.info.forEach(r=>{if(r.autoFull==='clean')c.clean++;else if(r.autoFull==='unsure')c.unsure++;else if(r.autoFull==='nostart')c.nostart++;if(r.s.full==='full')c.full++;});
+  return c;
 }
 function conf(n){return n>=10?'Good':n>=3?'Improving':'Rough';}
 function ratioNow(M){return M.ratio!=null?M.ratio:1+lossPct()/100;}
@@ -373,6 +394,7 @@ function paintLearn(){
     `<div class="card"><div class="hdr-row"><div class="label">How sure the estimates are</div><div class="small"><b>${c}</b></div></div>`+
     row('Shelly sessions stored',M.total)+row('Sessions used for learning',M.n)+row('Full charges used for the taper',M.taper.length)+
     row('Battery % readings stored',M.nAnch)+
+    (()=>{const f=fullCounts();return row('Full charges the car ended by itself',f.full)+row('Used for learning (within 5%)',f.clean)+row('Kept in the log, not used for learning',f.unsure+f.nostart)+row('Stopped by a relay, not full',f.notFull);})()+
     `<div class="small" style="margin-top:6px">Rough is 0 to 2 sessions, Improving is 3 to 9, Good is 10 or more. Until there is enough history the app uses ${pack().toFixed(1)} kWh and the ${lossPct()}% loss from Settings.</div></div>`+
     `<div class="card"><div class="label">Wall to battery</div>`+
     row('Used now',M.ratio!=null?'measured '+R.toFixed(2)+' (loss ≈ '+((R-1)*100).toFixed(0)+'%)':'setting '+R.toFixed(2)+' (loss '+lossPct()+'%)')+
@@ -403,7 +425,7 @@ function calcAll(){
   ss.forEach((s,i)=>{
     const nextStart=i+1<ss.length?ss[i+1].start_ms:Infinity;
     const added=(s.kwh/R)/pack()*100, rec={s,status:'pending',added};
-    const real=src.find(e=>e.kind==='charge'&&!e.auto&&e.ts>=s.start_ms-60000&&e.ts<=Math.min(nextStart,s.end_ms+6*3600000));
+    const real=src.find(e=>e.kind==='charge'&&!e.auto&&e.ts>=s.start_ms-60000&&e.ts<=Math.min(nextStart,s.end_ms+24*3600000));
     if(real){rec.status='real';rec.after=real.pct;rec.before=real.pct-added;rec.method='your Charge log';out.push(rec);return;}
     const r1=src.find(e=>e.ts>=s.end_ms-180000&&e.ts<nextStart&&e.kind==='trip');
     if(!r1){out.push(rec);return;}
@@ -417,6 +439,21 @@ function calcAll(){
   });
   CALC=out;CALCSIG=key;return out;
 }
+window.farrFullTag=function(r){
+  try{
+    if(!r||r.type!=='charge')return '';
+    const s=sessions().find(x=>x.end_ms===r.ts)||sessions().find(x=>r.ts>=x.start_ms-60000&&r.ts<=x.end_ms+24*3600000&&x.full);
+    if(!s||!s.full)return '';
+    if(s.full==='full'){
+      const rec=buildModel().info.find(x=>x.s.start_ms===s.start_ms);
+      const used=rec&&rec.autoFull==='clean';
+      return '<span class="tag g">FULL CHARGE</span>'+(used?'':'<span class="tag">NOT USED FOR LEARNING</span>');
+    }
+    if(s.full==='not_full')return '<span class="tag">NOT FULL</span>';
+    return '<span class="tag g">FULL CHARGE?</span><span class="tag">NOT USED FOR LEARNING</span>';
+  }catch(e){}
+  return '';
+};
 window.farrCalcTag=function(r){
   try{
     if(!r||!r.auto)return '';
@@ -513,6 +550,8 @@ const farr22={
     if(isNaN(x)||x<0||x>100){say('Enter a battery % from 0 to 100');return;}
     const L=window.__L22, se=L&&L.live&&L.live.session;
     addPct(x,'prompt',se?se.kwh:null); PST.lastAsk=Date.now(); lsSet('farrq.pctState',PST);
+    /* 2.2.2.1: tell the dot matrix display the battery % (best effort, only while a charge is running; never blocks the app) */
+    try{if(se&&window.farrCall)window.farrCall('displayStart',{pct:Math.round(x)}).catch(()=>{});}catch(e){}
     hidePrompt(); say('Battery '+Math.round(x)+'% saved'); paintEst(); if(SEL)loadSel();
   },
   skipPct(){PST.lastAsk=Date.now();lsSet('farrq.pctState',PST);hidePrompt();},
@@ -538,6 +577,33 @@ const farr22={
   reset(){if(FULL){VIEW=[FULL[0],FULL[1]];VIEW._k=SEL?SEL.start+(SEL.open?'o':''):'';CUR=null;drawAll();}},
   est:estFromInput,
   fetch(){const el=$('lnFetch');if(el)el.textContent='Fetching from the Shelly…';prefetch().then(n=>{MODEL=null;paintLearn();say(n?'Fetched '+n+' session'+(n>1?'s':''):'Nothing new to fetch');}).catch(e=>{if(el)el.textContent='Could not reach the Shelly: '+e.message;});},
+  backupRows(){
+    /* 2.2.3: battery % readings and the shared settings go into the pasted backup, so the other phone has the same learning data */
+    const out=[];
+    PCT.forEach(p=>out.push({ts:p.ts,kind:'pctread',obj:p}));
+    try{const k=['pack','loss','claim','petrol','compare','rateHome','rateStation','rateSolar'],o={};k.forEach(x=>{if(S&&S[x]!=null)o[x]=S[x];});out.push({ts:Date.now(),kind:'fsettings',obj:o});}catch(e){}
+    return out;
+  },
+  importRow(kind,obj){
+    if(kind==='pctread'){
+      if(!obj||typeof obj.ts!=='number'||typeof obj.pct!=='number')return true;
+      if(PCT.some(p=>p.ts===obj.ts&&p.pct===obj.pct))return true;
+      PCT.push({ts:obj.ts,pct:obj.pct,src:obj.src||'prompt',kwh:obj.kwh==null?null:obj.kwh});
+      PCT.sort((a,b)=>a.ts-b.ts); if(PCT.length>800)PCT=PCT.slice(-800);
+      lsSet('farrq.sessPct',PCT); MODEL=null; return true;
+    }
+    if(kind==='fsettings'){
+      try{
+        const stamp=lsGet('farrq.fsetStamp',0);
+        if(obj&&typeof obj==='object'&&(window.__fsetTs||0)>stamp){
+          ['pack','loss','claim','petrol','compare','rateHome','rateStation','rateSolar'].forEach(x=>{if(typeof obj[x]==='number'&&isFinite(obj[x]))S[x]=obj[x];});
+          lsSet('farrq.fsetStamp',window.__fsetTs); MODEL=null; window.__fsetChanged=true;
+        }
+      }catch(e){}
+      return true;
+    }
+    return false;
+  },
   model:buildModel,remaining:remaining,anchors:anchors,addPct:addPct,calcAll:calcAll,reportData:reportData,prepareReport:prepareReport,sheetExtra:sheetExtra,sheetSent:sheetSent
 };
 window.farr22=farr22;

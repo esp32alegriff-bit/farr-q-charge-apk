@@ -117,6 +117,7 @@ final class Poller {
             }
             // finished sessions
             String sKey = demo ? "demoSessions" : "sessions";
+            JSONArray addedNow = new JSONArray();
             for (int guard = 0; guard < 60; guard++) {
                 long after = Store.getLong(c, k(demo, "lastSessionSeq"), 0);
                 if (L.optLong("last_session_seq") <= after) break;
@@ -125,7 +126,9 @@ final class Poller {
                 if (a == null || a.length() == 0) break;
                 long max = after;
                 for (int i = 0; i < a.length(); i++) max = Math.max(max, a.optJSONObject(i).optLong("seq"));
-                newSessions += Store.addSessions(c, sKey, a, sid, demo);
+                int addedHere = Store.addSessions(c, sKey, a, sid, demo);
+                newSessions += addedHere;
+                if (addedHere > 0) for (int i = 0; i < a.length(); i++) addedNow.put(a.optJSONObject(i));
                 Store.putLong(c, k(demo, "lastSessionSeq"), max);
                 if (!res.optBoolean("more")) break;
             }
@@ -156,6 +159,11 @@ final class Poller {
             }
             if (!firstContact && visible > 5) {
                 Alerts.show(c, visible + " alerts while you were away. Open FARRUSCO-Q CHARGE to see them.", "info");
+            }
+            if (!demo) {   // 2.2.3: was the charge that just ended a full one? (read-only checks of the Shelly and the relay board)
+                long nowMs = L.optLong("now_ms", 0); if (nowMs <= 0) nowMs = System.currentTimeMillis();
+                if (!firstContact && addedNow.length() > 0) FullCharge.onNewSessions(c, addedNow, nowMs, demo);
+                try { FullCharge.tick(c, L); } catch (Exception ignored) {}
             }
             if (newSessions > 0 && !demo) { final Context ac = c.getApplicationContext(); new Thread(() -> Remote.pushMeter(ac)).start(); }   // copy to the owner's Google Sheet (only if set up)
             Store.putLong(c, k(demo, "lastSync"), System.currentTimeMillis());
@@ -188,6 +196,7 @@ final class Poller {
         boolean demo = Store.config(c).optBoolean("demo");
         if (!demo && r.optBoolean("offWifi")) return 0;          // nothing until Wi-Fi returns
         if (!r.optBoolean("ok")) return UNREACHABLE_MS;
+        if (!demo && FullCharge.pending(c)) return CHARGING_MS;      // 2.2.3: keep checking every 30 s until the charge is judged
         return r.optBoolean("charging") ? CHARGING_MS : IDLE_MS;
     }
 
