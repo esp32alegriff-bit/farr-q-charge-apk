@@ -184,6 +184,9 @@ final class Bridge {
             }
             case "remotePush": return Remote.push(c, a);
             case "relayStatus": return Relay.status(c);
+            case "relayDetails": return Relay.details(c);
+            case "displayStatus": return Display.status(c);
+            case "displayStart": return Display.start(c, a.optInt("pct", -1));
             case "relay": return Relay.command(c, a.optString("path"));
             case "demo": return demo(a.optBoolean("on"));
             case "notifPermission": act.runOnUiThread(act::askNotifications); return new JSONObject();
