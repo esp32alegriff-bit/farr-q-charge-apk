@@ -16,22 +16,6 @@ final class Relay {
 
     static JSONObject status(Context c) { return run(c, "GET", "/api/v1/status"); }
 
-    /** The full status JSON as the board sends it (LED, reset and radio details when the board has firmware 2.2). Read-only. */
-    static JSONObject details(Context c) {
-        Net.init(c);
-        JSONObject cfg = Store.config(c);
-        String base = Net.trimSlash(cfg.optString("relayUrl"));
-        try {
-            JSONObject j = new JSONObject(Net.request("GET", base + "/api/v1/status", null, cfg.optString("relayToken"), 4000));
-            j.put("reachable", true); j.put("address", base); j.put("checkedAt", System.currentTimeMillis());
-            return j;
-        } catch (Exception e) {
-            JSONObject o = new JSONObject();
-            try { o.put("reachable", false); o.put("address", base); o.put("message", "Relay board not reachable"); } catch (JSONException ignored) {}
-            return o;
-        }
-    }
-
     static JSONObject command(Context c, String path) {
         boolean ok = false;
         for (String a : ALLOWED) if (a.equals(path)) ok = true;

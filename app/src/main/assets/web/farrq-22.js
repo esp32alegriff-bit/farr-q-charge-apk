@@ -403,7 +403,7 @@ function calcAll(){
   ss.forEach((s,i)=>{
     const nextStart=i+1<ss.length?ss[i+1].start_ms:Infinity;
     const added=(s.kwh/R)/pack()*100, rec={s,status:'pending',added};
-    const real=src.find(e=>e.kind==='charge'&&!e.auto&&e.ts>=s.start_ms-60000&&e.ts<=Math.min(nextStart,s.end_ms+24*3600000));
+    const real=src.find(e=>e.kind==='charge'&&!e.auto&&e.ts>=s.start_ms-60000&&e.ts<=Math.min(nextStart,s.end_ms+6*3600000));
     if(real){rec.status='real';rec.after=real.pct;rec.before=real.pct-added;rec.method='your Charge log';out.push(rec);return;}
     const r1=src.find(e=>e.ts>=s.end_ms-180000&&e.ts<nextStart&&e.kind==='trip');
     if(!r1){out.push(rec);return;}
@@ -513,8 +513,6 @@ const farr22={
     if(isNaN(x)||x<0||x>100){say('Enter a battery % from 0 to 100');return;}
     const L=window.__L22, se=L&&L.live&&L.live.session;
     addPct(x,'prompt',se?se.kwh:null); PST.lastAsk=Date.now(); lsSet('farrq.pctState',PST);
-    /* 2.2.2.1: tell the dot matrix display the battery % (best effort, only while a charge is running; never blocks the app) */
-    try{if(se&&window.farrCall)window.farrCall('displayStart',{pct:Math.round(x)}).catch(()=>{});}catch(e){}
     hidePrompt(); say('Battery '+Math.round(x)+'% saved'); paintEst(); if(SEL)loadSel();
   },
   skipPct(){PST.lastAsk=Date.now();lsSet('farrq.pctState',PST);hidePrompt();},
