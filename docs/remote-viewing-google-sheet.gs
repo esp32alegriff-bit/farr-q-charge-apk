@@ -1,5 +1,5 @@
 /*
- FARR Q Charge - "View from anywhere"  (script 2.2.2, with Cost R on Meter sessions and the meter copy for Ver_FarrQ_2.2.4)
+ FARR Q Charge - "View from anywhere"  (script 2.2.5: live reading and alerts for a phone that is away from home, for Ver_FarrQ_2.2.5)
  A copy of the charge log in YOUR Google Sheet. The phones send to it; you open the Sheet from any country.
 
  ONE-TIME SETUP (about 5 minutes)
@@ -23,13 +23,15 @@
  - Only someone with the address AND the password can add data. Nobody can read the Sheet unless you share it.
  - Rows are matched by time, so sending twice never doubles anything, and both phones merge into one log.
  - Deleting an entry in the app does not delete it from the Sheet. Delete the row in the Sheet too.
+ - 2.2.5: the phone at home sends the live reading about every 5 minutes while charging, and every alert it raises.
+   A phone that is away asks for them every 5 minutes and shows the alerts you ticked. Needs Ver_FarrQ_2.2.5 on both phones.
  - 2.2.2 adds tabs: Charge detail, Battery % readings, Calculated %, Minute data, Estimates, Daily totals, Alerts, Settings log.
    Old apps keep working; the app sends the extra data only once this script is in place.
  - If you change this script later: Deploy > Manage deployments > Edit > Version: New version > Deploy.
 */
 
 var PASSWORD = 'CHANGE-ME';
-var SCRIPT_VERSION = '2.2.2';   // shown in the app and in the Summary and Phones tabs
+var SCRIPT_VERSION = '2.2.5';   // shown in the app and in the Summary and Phones tabs
 
 var TABS = {
   charges:  {name: 'Charge log',     head: ['When', 'Where', 'Battery %', 'Stored kWh', 'Wall kWh', 'Cost R', 'Measured', 'Auto (no charge log)', 'Phone', 'Updated'], key: [0, 1]},
@@ -79,10 +81,17 @@ function doPost(e) {
     if (p.kind === 'app' && p.extra) {
       try { n += extra_(ss, p.extra, now); } catch (x2) { /* extra tabs never stop the main sync */ }
     }
+    if (p.kind === 'meter' && p.alerts && p.alerts.length) {
+      n += upsert_(ss, TABS.alerts, p.alerts.slice(-60).filter(function (r) { return r && r.ts > 0; }).map(function (r) {
+        return [d_(r.ts), String(r.type || ''), String(r.level || ''), String(r.text || '')];
+      }));
+    }
     if (p.kind === 'meter' && p.live) live_(ss, p.live, now);
     var extra = {script: SCRIPT_VERSION};
     if (p.kind === 'app' && p.wantReadings) extra.readings = readings_(ss);
-    if (p.kind === 'app' && p.wantMeter) { try { extra.meter = meter_(ss); } catch (x4) { /* the meter copy never stops the sync */ } }
+    var asks = (p.kind === 'app' || p.kind === 'pull');
+    if (asks && p.wantMeter) { try { extra.meter = meter_(ss); } catch (x4) { /* the meter copy never stops the sync */ } }
+    if (asks && p.wantAlerts) { try { extra.alerts = alerts_(ss, +p.since || 0); extra.now = now.getTime(); } catch (x5) { /* alerts never stop the sync */ } }
     return out_(true, 'Sheet updated (' + n + ' rows checked)', extra);
   } catch (err) {
     return out_(false, 'Script error: ' + err);
@@ -151,6 +160,19 @@ function readings_(ss) {
 
 /* Ver_FarrQ_2.2.4: the finished Shelly charges (newest 200) and the last EV METER block, so a phone away from home
    can show them. Read only: nothing in the Sheet is changed here. Older apps never ask for this. */
+/* 2.2.5: alerts the phone at home raised since a time (newest first), for a phone that is away */
+function alerts_(ss, since) {
+  var out = [], sh = ss.getSheetByName(TABS.alerts.name);
+  if (!sh || sh.getLastRow() < 2) return out;
+  var data = sh.getRange(2, 1, Math.min(sh.getLastRow() - 1, 80), 4).getValues();
+  for (var i = 0; i < data.length; i++) {
+    var d = data[i], ts = d[0] instanceof Date ? d[0].getTime() : 0;
+    if (!ts || ts < since) continue;
+    out.push({ts: ts, type: String(d[1] || ''), level: String(d[2] || ''), text: String(d[3] || '')});
+  }
+  return out;
+}
+
 function meter_(ss) {
   var out = {sessions: [], live: null};
   var sh = ss.getSheetByName(TABS.sessions.name);
@@ -282,8 +304,7 @@ function summary_(ss, p, phone, now) {
 }
 
 function live_(ss, live, now) {
-  var sh = ss.getSheetByName('Summary');
-  if (!sh) return;
+  var sh = ss.getSheetByName('Summary') || ss.insertSheet('Summary', 0);
   var v = [['EV METER (last check)', ''], ['Updated', now], ['Charging now', live.charging ? 'yes' : 'no'], ['Watts', live.watts], ['Today kWh', live.today_kwh], ['Month kWh', live.month_kwh], ['Meter total kWh', live.total_kwh]];
   sh.getRange(1, 4, v.length, 2).setValues(v.map(function (r) { return [r[0], r[1] == null ? '' : r[1]]; }));
   sh.getRange('D1').setFontWeight('bold'); sh.setColumnWidth(4, 180);

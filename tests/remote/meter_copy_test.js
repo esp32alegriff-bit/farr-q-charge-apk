@@ -1,4 +1,4 @@
-// Ver_FarrQ_2.2.4: the Sheet script returns the finished Shelly charges, and the app adds them as copies without ever double counting.
+// Ver_FarrQ_2.2.5: the Sheet script returns the finished Shelly charges, and the app adds them as copies without ever double counting.
 // Usage: NODE_PATH=$(npm root -g) PW_MODULE=playwright CHROME=<chromium> node tests/remote/meter_copy_test.js
 const fs=require('fs'),vm=require('vm'),path=require('path');
 let fail=0;const ok=(c,m)=>{console.log((c?'PASS ':'FAIL ')+m);if(!c)fail++;};
@@ -61,7 +61,7 @@ const {chromium}=require(process.env.PW_MODULE||'playwright');
     if(m==='sessions')return JSON.stringify({sessions:window.__store});
     if(m==='importExtra'){if(a.kind==='meter'){const o=a.obj;if(!window.__store.some(s=>key(s)===key(o))){window.__store.push(o);if(o.store_id!=='sheet')purge();}}return '{}';}
     return JSON.stringify({});},
-   call(id,m,a){window.__calls.push({m,a:JSON.parse(a)});setTimeout(()=>window.__farrCb(id,true,JSON.stringify({ok:true,message:'Sheet updated',script:'2.2.2',readings:[],meter:window.__meter})),10);},
+   call(id,m,a){window.__calls.push({m,a:JSON.parse(a)});setTimeout(()=>window.__farrCb(id,true,JSON.stringify({ok:true,message:'Sheet updated',script:'2.2.5',readings:[],meter:window.__meter})),10);},
    shareText(){},shareFile(){}};
   localStorage.setItem('farrq.entries',JSON.stringify([{ts:Date.now()-30*3600e3,kind:'charge',odo:1000,pct:50,where:'Home'},{ts:Date.now()-20*3600e3,kind:'trip',odo:1040,pct:40,where:''}]));
  });

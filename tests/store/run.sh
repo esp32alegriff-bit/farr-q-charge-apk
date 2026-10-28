@@ -3,5 +3,6 @@
 set -e
 cd "$(dirname "$0")"
 OUT=$(mktemp -d)
-javac -d "$OUT" $(find stubs -name '*.java') ../../app/src/main/java/za/co/farrusco/farrqcharge/Store.java StoreSheetCopyTest.java
+javac -d "$OUT" $(find stubs -name '*.java') ../../app/src/main/java/za/co/farrusco/farrqcharge/Store.java ../../app/src/main/java/za/co/farrusco/farrqcharge/AlertMerge.java StoreSheetCopyTest.java AlertMergeTest.java
 java -cp "$OUT" StoreSheetCopyTest
+java -cp "$OUT" AlertMergeTest

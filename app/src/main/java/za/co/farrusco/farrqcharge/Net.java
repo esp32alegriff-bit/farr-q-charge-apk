@@ -43,7 +43,7 @@ final class Net {
     static String request(String method, String url, String body, String token, int timeoutMs) throws IOException {
         if (url == null || !(url.startsWith("http://") || url.startsWith("https://")))
             throw new IOException("Address must start with http://");
-        Network wifi = app != null ? wifiNetwork(app) : null;
+        Network wifi = app != null && url.startsWith("http://") ? wifiNetwork(app) : null;   // 2.2.5: web addresses (Google) use whatever network has internet; home devices use Wi-Fi
         URL u = new URL(url);
         HttpURLConnection c = (HttpURLConnection) (wifi != null ? wifi.openConnection(u) : u.openConnection());
         try {

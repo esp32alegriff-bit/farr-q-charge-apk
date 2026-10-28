@@ -529,7 +529,7 @@ function sheetExtra(){
   const pk=(S.compare/100*S.petrol);
   const dailyRows=Object.values(daily).sort((a,b)=>a.date-b.date).slice(-120).map(o=>({date:o.date,trips:o.trips,km:+o.km.toFixed(1),used:+o.used.toFixed(2),charges:o.charges,wall:+o.wall.toFixed(2),cost:+o.cost.toFixed(2),
     shelly:+o.shelly.toFixed(2),petrol:+(o.km*pk).toFixed(2),saving:o.km>0&&o.wall>0?+(o.km*pk-o.cost).toFixed(2):''}));
-  let al=[];try{al=((syncc('alerts')||{}).alerts||[]).filter(a=>!a.demo).slice(0,200).map(a=>({ts:a.ts,type:a.type,level:a.level,text:a.text}));}catch(e){}
+  let al=[];try{al=((syncc('alerts')||{}).alerts||[]).filter(a=>!a.demo&&!a.from_sheet).slice(0,200).map(a=>({ts:a.ts,type:a.type,level:a.level,text:a.text}));}catch(e){}
   return {detail,calc:calcRows,pct:PCT.map(p=>{const x=all.find(z=>p.ts>=z.start_ms-600000&&p.ts<=z.end_ms+600000);return {ts:p.ts,pct:p.pct,src:p.src,kwh:p.kwh==null?'':p.kwh,session:x?x.start_ms:0};}),
     minutes,estimates:[estRow],daily:dailyRows,alerts:al,settings:log.map(l=>({ts:l.ts,v:l.v}))};
 }

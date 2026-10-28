@@ -5,7 +5,7 @@
 (function(){
 'use strict';
 const N=window.FarrNative||null;
-window.FARR_VER='Ver_FarrQ_2.2.4';
+window.FARR_VER='Ver_FarrQ_2.2.5';
 window.FARR_APP_URL='https://github.com/esp32alegriff-bit/farr-q-charge-apk/releases/latest';
 
 /* ---------- bridge ---------- */
@@ -182,8 +182,8 @@ function paintLive(){
 }
 
 /* ---------- Home card ---------- */
-/* 2.2.4: shown only when this phone cannot reach the meter (away from home). The reading was copied to the Sheet by the phone at home
-   when its last charge ended, so it is labelled with that time and is not a live reading. */
+/* 2.2.4/2.2.5: shown only when this phone cannot reach the meter (away from home). The phone at home copies the reading to the Sheet
+   about every 5 minutes while charging (every 30 minutes otherwise), so it is labelled with that time and is not a live reading. */
 function remoteLiveHTML(){
   try{
     const r=JSON.parse(localStorage.getItem('farrq.remoteLive')||'null');
@@ -191,6 +191,8 @@ function remoteLiveHTML(){
     const when=new Date(r.at).toLocaleString('en-ZA');
     return `<div class="card"><div class="hdr-row"><div class="label">EV meter · copied from the Sheet</div><div class="small">${esc(ago(r.at))}</div></div>`+
       R('Last copied',esc(when))+
+      R('Charging then',r.charging?'yes':'no')+
+      (r.charging?R('Power then',n2(r.watts,0)+' W'):'')+
       R('Day total then',n2(r.today,2)+' kWh · R'+n2((+r.today||0)*rate(),2))+
       R('Month total then',n2(r.month,2)+' kWh · R'+n2((+r.month||0)*rate(),2))+
       `</div>`;
@@ -629,7 +631,7 @@ window.farrAutoRows=function(src){
 
 /* ---------- 1.10: view from anywhere (a copy of the log in the owner's own Google Sheet) ---------- */
 const RM_SCRIPT='2.1.2';
-function rmOk(v){return v==='2.1.2'||v==='2.2.2';}   /* 2.2.2: either Sheet script is fine - no warnings */
+function rmOk(v){return String(v||'')>='2.2.5';}   /* 2.2.5: needs the 2.2.5 script (live reading and alerts for a phone that is away) - an older script says so */
 function rmNew(v){return String(v||'')>='2.2.2';}
 let rmTimer=null, rmLast=0, rmBusy=false, rmSaveOrig=null, rmPending=null;
 /* 2.1.4: the last Sheet sync result, kept so the report can show the Sheet status */
@@ -724,7 +726,7 @@ function rmMergeMeter(m){
       try{sync('importExtra',{kind:'meter',obj:o});copies.push(st);res.added++;}catch(e){}
     }
     const L=m.live;
-    if(L&&+L.updated_ms>0){try{localStorage.setItem('farrq.remoteLive',JSON.stringify({at:+L.updated_ms,got:Date.now(),today:L.today_kwh,month:L.month_kwh,total:L.total_kwh}));}catch(e){}}
+    if(L&&+L.updated_ms>0){try{localStorage.setItem('farrq.remoteLive',JSON.stringify({at:+L.updated_ms,got:Date.now(),today:L.today_kwh,month:L.month_kwh,total:L.total_kwh,watts:+L.watts||0,charging:!!L.charging}));}catch(e){}}
     if(res.added){loadMS();try{renderAll();}catch(e){}try{renderHome();}catch(e){}}
   }catch(e){}
   return res;

@@ -71,12 +71,54 @@ final class Alerts {
             o.put("type", type); o.put("level", level == null ? "info" : level); o.put("text", text);
             o.put("ts", ts > 0 ? ts : System.currentTimeMillis()); o.put("demo", demo);
         } catch (JSONException ignored) {}
+        boolean sameAsSheetCopy = !demo && AlertMerge.duplicate(a, type, ts > 0 ? ts : System.currentTimeMillis(), true);
         out.put(o);
         for (int i = 0; i < a.length() && out.length() < Store.MAX_ALERTS; i++) out.put(a.opt(i));
         Store.putArray(c, "alerts", out);
+        if (!demo && !AlertMerge.localOnly(type)) outboxAdd(c, o);   // 2.2.5: goes to the Google Sheet so a phone that is away can show it
         if (isOff(c, type)) return;
         Store.putLong(c, "unread", Store.getLong(c, "unread", 0) + 1);
-        if (notify) show(c, demo ? text : text, level);
+        if (notify && !sameAsSheetCopy) show(c, demo ? text : text, level);   // not twice when the Sheet already brought the same alert
+    }
+
+    /** 2.2.5: an alert that came from the Google Sheet (raised by the phone at home). Returns true when it was new. */
+    static synchronized boolean addFromSheet(Context c, String type, String level, String text, long ts, boolean notify) {
+        JSONArray a = Store.array(c, "alerts"), out = new JSONArray();
+        if (type == null || type.isEmpty() || ts <= 0 || AlertMerge.duplicate(a, type, ts, false)) return false;
+        JSONObject o = new JSONObject();
+        try {
+            o.put("type", type); o.put("level", level == null || level.isEmpty() ? "info" : level); o.put("text", text);
+            o.put("ts", ts); o.put("demo", false); o.put("from_sheet", true);
+        } catch (JSONException ignored) {}
+        out.put(o);
+        for (int i = 0; i < a.length() && out.length() < Store.MAX_ALERTS; i++) out.put(a.opt(i));
+        Store.putArray(c, "alerts", out);
+        if (isOff(c, type)) return true;
+        Store.putLong(c, "unread", Store.getLong(c, "unread", 0) + 1);
+        if (notify) show(c, text, level);
+        return true;
+    }
+
+    /* ---------- 2.2.5: alerts waiting to go to the Google Sheet ---------- */
+    static synchronized JSONArray outbox(Context c) { return Store.array(c, "alertOutbox"); }
+
+    private static synchronized void outboxAdd(Context c, JSONObject alert) {
+        JSONArray a = outbox(c);
+        try {
+            JSONObject o = new JSONObject();
+            o.put("type", alert.optString("type")); o.put("level", alert.optString("level", "info"));
+            o.put("text", alert.optString("text")); o.put("ts", alert.optLong("ts"));
+            a.put(o);
+        } catch (JSONException ignored) {}
+        AlertMerge.trim(a);
+        Store.putArray(c, "alertOutbox", a);
+    }
+
+    /** Removes the first n entries (the ones that were sent). */
+    static synchronized void outboxDrop(Context c, int n) {
+        JSONArray a = outbox(c), out = new JSONArray();
+        for (int i = Math.max(0, n); i < a.length(); i++) out.put(a.opt(i));
+        Store.putArray(c, "alertOutbox", out);
     }
 
     static synchronized void removeDemo(Context c) {

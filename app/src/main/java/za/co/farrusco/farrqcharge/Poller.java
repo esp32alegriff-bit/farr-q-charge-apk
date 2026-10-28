@@ -24,7 +24,7 @@ import java.io.IOException;
 final class Poller {
     private Poller() {}
 
-    static final long CHARGING_MS = 30_000, IDLE_MS = 5 * 60_000, UNREACHABLE_MS = 15 * 60_000;
+    static final long CHARGING_MS = 30_000, IDLE_MS = 5 * 60_000, UNREACHABLE_MS = 15 * 60_000, AWAY_MS = 5 * 60_000;
     static final String ACTION_POLL = "za.co.farrusco.farrqcharge.POLL";
     static final String ACTION_NET = "za.co.farrusco.farrqcharge.NET";
 
@@ -71,18 +71,27 @@ final class Poller {
         Store.putLong(c, "lastPoll", System.currentTimeMillis());
         JSONObject r = new JSONObject();
         try {
-            if (!demo && !Net.onWifi(c)) { r.put("ok", false); r.put("offWifi", true); r.put("message", "Not on Wi-Fi"); return r; }
+            if (!demo && !Net.onWifi(c)) { r.put("ok", false); r.put("offWifi", true); r.put("message", "Not on Wi-Fi"); away(c, r); return r; }
             JSONObject L;
             try { L = m.live(); }
             catch (IOException e) {
                 failed(c, demo);
-                r.put("ok", false); r.put("message", "Meter not answering: " + e.getMessage()); return r;
+                r.put("ok", false); r.put("message", "Meter not answering: " + e.getMessage()); away(c, r); return r;
             }
             seen(c, demo, L);
             return syncLocked(c, m, L);
         } catch (JSONException e) {
             return r;
         }
+    }
+
+    /** 2.2.5: the meter cannot be reached (this phone is away, or the meter is down): ask the Google Sheet for the alerts instead. */
+    private static void away(Context c, JSONObject r) {
+        try {
+            if (!Remote.configured(c) || Store.config(c).optBoolean("demo")) return;
+            r.put("away", true);
+            if (System.currentTimeMillis() - Store.getLong(c, "lastPull", 0) >= 120_000L) Remote.pull(c);
+        } catch (JSONException ignored) {}
     }
 
     private static JSONObject syncLocked(Context c, MeterApi m, JSONObject L) {
@@ -165,7 +174,7 @@ final class Poller {
                 if (!firstContact && addedNow.length() > 0) FullCharge.onNewSessions(c, addedNow, nowMs, demo);
                 try { FullCharge.tick(c, L); } catch (Exception ignored) {}
             }
-            if (newSessions > 0 && !demo) { final Context ac = c.getApplicationContext(); new Thread(() -> Remote.pushMeter(ac)).start(); }   // copy to the owner's Google Sheet (only if set up)
+            if (!demo) Remote.pushLiveIfDue(c, L, newSessions > 0);   // 2.2.5: live reading, alerts and new sessions to the owner's Google Sheet (only if set up)
             Store.putLong(c, k(demo, "lastSync"), System.currentTimeMillis());
             r.put("ok", true); r.put("pushed", pushed); r.put("newSessions", newSessions); r.put("newEvents", newEvents);
             r.put("charging", L.optBoolean("charging"));
@@ -194,6 +203,7 @@ final class Poller {
     /* ---------- background scheduling ---------- */
     static long nextDelay(JSONObject r, Context c) {
         boolean demo = Store.config(c).optBoolean("demo");
+        if (!demo && r.optBoolean("away")) return AWAY_MS;       // 2.2.5: away from home, ask the Sheet every 5 minutes
         if (!demo && r.optBoolean("offWifi")) return 0;          // nothing until Wi-Fi returns
         if (!r.optBoolean("ok")) return UNREACHABLE_MS;
         if (!demo && FullCharge.pending(c)) return CHARGING_MS;      // 2.2.3: keep checking every 30 s until the charge is judged

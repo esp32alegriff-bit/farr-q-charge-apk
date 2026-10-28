@@ -2,7 +2,7 @@ import android.content.Context;
 import org.json.*;
 import za.co.farrusco.farrqcharge.StoreTestAccess;
 
-/** Ver_FarrQ_2.2.4: Sheet copies of Shelly sessions are replaced by the real session and never double counted.
+/** Ver_FarrQ_2.2.5: Sheet copies of Shelly sessions are replaced by the real session and never double counted.
  *  Run: tests/store/run.sh  (compiles the real Store.java against tiny stubs of Android and org.json). */
 public class StoreSheetCopyTest {
     static int fail = 0;
