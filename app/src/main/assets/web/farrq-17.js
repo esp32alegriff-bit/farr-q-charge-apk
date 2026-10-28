@@ -5,7 +5,7 @@
 (function(){
 'use strict';
 const N=window.FarrNative||null;
-window.FARR_VER='Ver_FarrQ_2.2.3';
+window.FARR_VER='Ver_FarrQ_2.2.4';
 window.FARR_APP_URL='https://github.com/esp32alegriff-bit/farr-q-charge-apk/releases/latest';
 
 /* ---------- bridge ---------- */
@@ -182,6 +182,20 @@ function paintLive(){
 }
 
 /* ---------- Home card ---------- */
+/* 2.2.4: shown only when this phone cannot reach the meter (away from home). The reading was copied to the Sheet by the phone at home
+   when its last charge ended, so it is labelled with that time and is not a live reading. */
+function remoteLiveHTML(){
+  try{
+    const r=JSON.parse(localStorage.getItem('farrq.remoteLive')||'null');
+    if(!r||!(r.at>0))return '';
+    const when=new Date(r.at).toLocaleString('en-ZA');
+    return `<div class="card"><div class="hdr-row"><div class="label">EV meter · copied from the Sheet</div><div class="small">${esc(ago(r.at))}</div></div>`+
+      R('Last copied',esc(when))+
+      R('Day total then',n2(r.today,2)+' kWh · R'+n2((+r.today||0)*rate(),2))+
+      R('Month total then',n2(r.month,2)+' kWh · R'+n2((+r.month||0)*rate(),2))+
+      `</div>`;
+  }catch(e){return '';}
+}
 function paintHomeCard(){
   const el=$('meterCard'); if(!el)return;
   const L=LIVE, st=statusText(L), v=L&&L.live;
@@ -192,6 +206,7 @@ function paintHomeCard(){
   if(!v){
     h+=`<div class="card" onclick="go('meter')"><div class="hdr-row"><div class="label">EV meter</div><div class="small">${esc(st)}</div></div>`+
        `<div class="small">${L&&L.everSeen?'The meter is not answering. Last seen '+ago(L.lastSeen)+'.':'Meter not found yet. It will show here once it is connected at 192.168.1.128.'}</div></div>`;
+    h+=remoteLiveHTML();
     el.innerHTML=h;return;
   }
   const se=v.session;
@@ -635,12 +650,12 @@ function rmPayload(){
   const sm=x=>({trips:x.trips,km:+x.km.toFixed(1),eff:x.eff==null?null:+x.eff.toFixed(2),charges:x.charges,wall:+x.wall.toFixed(2),cost:+x.cost.toFixed(2)});
   const autoRemove=rmGone(rows);
   rmPending={sent:rmAutoKeys(rows),gone:autoRemove};
-  return {kind:'app',wantReadings:true,autoRemove,sent:Date.now(),
+  return {kind:'app',wantReadings:true,wantMeter:true,autoRemove,sent:Date.now(),
     readings:real.map(e=>({ts:e.ts,kind:e.kind,odo:e.odo,pct:e.pct,where:e.where||'',carKm:e.carKm==null?'':e.carKm})),
     charges:rows.filter(r=>r.type==='charge').map(r=>({ts:r.ts,where:r.where||'Unlogged',pct:r.pct,stored:+r.stored.toFixed(2),wall:+r.wall.toFixed(2),cost:+r.cost.toFixed(2),measured:!!r.measured,auto:!!r.auto})),
     trips:rows.filter(r=>r.type==='trip').map(r=>({ts:r.ts,km:+r.km.toFixed(1),kwh:r.countEff?+r.used.toFixed(2):'',cons:r.countEff?+r.cons.toFixed(1):'',odo:r.odo,pct:r.pct})),
     summary:{last7:sm(s7),last30:sm(s30),lastReading:{ts:L.ts||0,odo:L.odo||0,pct:L.pct==null?0:L.pct}},
-    sessions:(MS||[]).slice(-300)};
+    sessions:(MS||[]).filter(x=>!x.from_sheet).slice(-300)};   // 2.2.4: copies that came from the Sheet are never sent back
 }
 function rmPayloadX(){
   const pl=rmPayload();
@@ -684,6 +699,37 @@ function rmMerge(rows){
   return res;
 }
 window.farrRmMerge=rmMerge;
+
+/* ---------- 2.2.4: finished Shelly charges and the last meter reading, as copied to the Sheet by the phone at home ---------- */
+/* A copy is only added when this phone has no measured session of its own at that time, so at home nothing is ever counted twice.
+   Copies are tagged from_sheet: they are never sent back to the Sheet, and the app removes them when the real session arrives. */
+function rmMergeMeter(m){
+  const res={added:0};
+  try{
+    if(!m||!Array.isArray(m.sessions)||typeof MS==='undefined')return res;
+    loadMS();   // the background check may have stored real sessions since this screen last looked
+    let epoch=0; try{epoch=+localStorage.getItem('farrq.rmEpoch')||0;}catch(e){}
+    const own=MS.filter(x=>!x.demo&&!x.from_sheet);
+    const copies=MS.filter(x=>x.from_sheet).map(x=>x.start_ms);
+    for(const s of m.sessions.slice(0,200)){
+      const st=+s.start_ms, en=+s.end_ms, kwh=+s.kwh;
+      if(!(st>0&&en>st&&kwh>0&&kwh<200)||st<epoch)continue;
+      if(copies.some(t=>Math.abs(t-st)<=5000))continue;
+      if(own.some(x=>Math.abs(x.start_ms-st)<=60000||(x.start_ms<=en&&x.end_ms>=st)))continue;
+      const dur=Math.round((en-st)/1000), tariff=+s.tariff>0?+s.tariff:0;
+      const o={store_id:'sheet',seq:0,from_sheet:true,start_ms:st,end_ms:en,kwh:kwh,duration_s:dur,peak_w:+s.peak_w||0,
+        avg_w:dur>0?Math.round(kwh*3600000/dur):0,end_reason:String(s.end_reason||'')};
+      if(tariff)o.tariff=tariff;
+      if(s.cost!==''&&s.cost!=null&&isFinite(+s.cost))o.cost=+s.cost;
+      try{sync('importExtra',{kind:'meter',obj:o});copies.push(st);res.added++;}catch(e){}
+    }
+    const L=m.live;
+    if(L&&+L.updated_ms>0){try{localStorage.setItem('farrq.remoteLive',JSON.stringify({at:+L.updated_ms,got:Date.now(),today:L.today_kwh,month:L.month_kwh,total:L.total_kwh}));}catch(e){}}
+    if(res.added){loadMS();try{renderAll();}catch(e){}try{renderHome();}catch(e){}}
+  }catch(e){}
+  return res;
+}
+window.farrRmMergeMeter=rmMergeMeter;
 async function rmSend(manual){
   if(!rmOn()){if(manual)setRm('Enter the web address and password first, then Save.');return;}
   if(rmBusy)return; rmBusy=true;
@@ -694,6 +740,7 @@ async function rmSend(manual){
     try{if(rmPending){const old=JSON.parse(localStorage.getItem('farrq.rmAuto')||'[]').filter(t=>!rmPending.gone.includes(t));localStorage.setItem('farrq.rmAuto',JSON.stringify([...new Set(old.concat(rmPending.sent))].slice(-500)));}}catch(e){}
     let note='', mm={added:0,filled:0};
     try{const m=rmMerge(r.readings);mm=m;if(m.added||m.filled)note=' · '+m.added+' new from the other phone'+(m.filled?', '+m.filled+' filled in':'');if(m.added||m.filled)say('Updated from the other phone');}catch(e){note=' · could not read the other phone ('+e.message+')';}
+    try{const mt=rmMergeMeter(r.meter);if(mt.added){note+=' · '+mt.added+' charge'+(mt.added>1?'s':'')+' from the Sheet';say('Charges updated from the Sheet');}}catch(e){}
     const sv=r.script?('Sheet script '+r.script+(rmOk(r.script)?' (matches)':' - paste the new script and redeploy')):'Sheet script is OLD - paste the new script and redeploy';
     rmInfoSave({tryTs:Date.now(),tryOk:true,err:'',okTs:Date.now(),msg:r.message||'ok',script:r.script||'',match:rmOk(r.script),added:mm.added,filled:mm.filled});
     setRm('Synced '+ago(Date.now()).replace('0 s ago','just now')+': '+(r.message||'ok')+note+'\nApp '+(window.FARR_VER||'')+' · '+sv);

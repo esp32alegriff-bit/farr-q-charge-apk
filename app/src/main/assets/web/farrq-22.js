@@ -495,7 +495,7 @@ async function prepareReport(cut){
 /* ---------- 2.2.2: extra detail copied to the Google Sheet (only when the new script is in place) ---------- */
 function setSig(){try{return [S.rateHome,S.rateStation,S.rateSolar,S.loss,S.pack,S.claim,S.petrol,S.compare,S.carPrice].join('|');}catch(e){return '';}}
 function sheetExtra(){
-  const M=buildModel(),R=ratioNow(M),calc=calcAll(),ss=sessions(true).slice(-300);
+  const M=buildModel(),R=ratioNow(M),calc=calcAll(),all=sessions(true).slice(-300),ss=all.filter(x=>!x.from_sheet);   // 2.2.4: copies that came from the Sheet only count in the totals, never as detail rows
   const iso=ts=>ts||0;
   // settings log: a row each time a rate or car setting changes
   let log=lsGet('farrq.setLog',[]);const sg=setSig();
@@ -510,7 +510,7 @@ function sheetExtra(){
       src:rec?(rec.status==='real'?'Charge log':rec.status==='calc'?'Calculated ('+rec.quality+')':rec.status==='check'?'Check readings':'Not recorded yet'):'',
       lossK:+(x.kwh-batt).toFixed(3),lossR:+((x.kwh-batt)*rate()).toFixed(2),rate:rate()};
   });
-  const calcRows=calc.map(c=>({start:c.s.start_ms,end:c.s.end_ms,wall:+(+c.s.kwh).toFixed(3),added:+c.added.toFixed(1),
+  const calcRows=calc.filter(c=>!(c.s&&c.s.from_sheet)).map(c=>({start:c.s.start_ms,end:c.s.end_ms,wall:+(+c.s.kwh).toFixed(3),added:+c.added.toFixed(1),
     before:c.before==null?'':+c.before.toFixed(1),after:c.after==null?'':+c.after.toFixed(1),status:c.status,method:c.method||'',quality:c.quality||'',
     laterAt:c.r1?c.r1.ts:0,laterOdo:c.r1?c.r1.odo:'',earlierAt:c.r0?c.r0.ts:0,earlierPct:c.r0?c.r0.pct:'',earlierOdo:c.r0?c.r0.odo:'',
     fwd:c.fwd==null?'':+c.fwd.toFixed(1),diff:c.diff==null?'':+c.diff.toFixed(1)}));
@@ -525,12 +525,12 @@ function sheetExtra(){
   const daily={};
   try{rowsFor('all').forEach(r=>{const d=new Date(r.ts);d.setHours(0,0,0,0);const k=d.getTime();const o=daily[k]||(daily[k]={date:k,trips:0,km:0,used:0,charges:0,wall:0,cost:0,shelly:0});
     if(r.type==='trip'&&r.km>0){o.trips++;o.km+=r.km;if(r.countEff)o.used+=r.used;}if(r.type==='charge'){o.charges++;o.wall+=r.wall;o.cost+=r.cost;}});}catch(e){}
-  ss.forEach(x=>{const d=new Date(x.end_ms);d.setHours(0,0,0,0);const o=daily[d.getTime()]||(daily[d.getTime()]={date:d.getTime(),trips:0,km:0,used:0,charges:0,wall:0,cost:0,shelly:0});o.shelly+=x.kwh;});
+  all.forEach(x=>{const d=new Date(x.end_ms);d.setHours(0,0,0,0);const o=daily[d.getTime()]||(daily[d.getTime()]={date:d.getTime(),trips:0,km:0,used:0,charges:0,wall:0,cost:0,shelly:0});o.shelly+=x.kwh;});
   const pk=(S.compare/100*S.petrol);
   const dailyRows=Object.values(daily).sort((a,b)=>a.date-b.date).slice(-120).map(o=>({date:o.date,trips:o.trips,km:+o.km.toFixed(1),used:+o.used.toFixed(2),charges:o.charges,wall:+o.wall.toFixed(2),cost:+o.cost.toFixed(2),
     shelly:+o.shelly.toFixed(2),petrol:+(o.km*pk).toFixed(2),saving:o.km>0&&o.wall>0?+(o.km*pk-o.cost).toFixed(2):''}));
   let al=[];try{al=((syncc('alerts')||{}).alerts||[]).filter(a=>!a.demo).slice(0,200).map(a=>({ts:a.ts,type:a.type,level:a.level,text:a.text}));}catch(e){}
-  return {detail,calc:calcRows,pct:PCT.map(p=>{const x=ss.find(z=>p.ts>=z.start_ms-600000&&p.ts<=z.end_ms+600000);return {ts:p.ts,pct:p.pct,src:p.src,kwh:p.kwh==null?'':p.kwh,session:x?x.start_ms:0};}),
+  return {detail,calc:calcRows,pct:PCT.map(p=>{const x=all.find(z=>p.ts>=z.start_ms-600000&&p.ts<=z.end_ms+600000);return {ts:p.ts,pct:p.pct,src:p.src,kwh:p.kwh==null?'':p.kwh,session:x?x.start_ms:0};}),
     minutes,estimates:[estRow],daily:dailyRows,alerts:al,settings:log.map(l=>({ts:l.ts,v:l.v}))};
 }
 function sheetSent(extra){

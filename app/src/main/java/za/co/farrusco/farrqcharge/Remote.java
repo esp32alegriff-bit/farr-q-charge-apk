@@ -50,6 +50,7 @@ final class Remote {
             out.put("ok", true); out.put("message", msg);
             if (r.has("script")) out.put("script", r.optString("script"));
             if (r.has("readings")) out.put("readings", r.get("readings"));   // the other phone's entries, merged by the app screens
+            if (r.has("meter")) out.put("meter", r.get("meter"));            // 2.2.4: finished Shelly charges and the last meter reading, copied by the phone at home
         } catch (JSONException e) {
             throw new IOException("Could not prepare the data to send");
         }
@@ -64,7 +65,11 @@ final class Remote {
             p.put("kind", "meter");
             p.put("sent", System.currentTimeMillis());
             JSONArray all = Store.array(c, "sessions"), recent = new JSONArray();
-            for (int i = Math.max(0, all.length() - 300); i < all.length(); i++) recent.put(all.opt(i));
+            for (int i = Math.max(0, all.length() - 300); i < all.length(); i++) {
+                JSONObject s = all.optJSONObject(i);
+                if (s != null && s.optBoolean("from_sheet")) continue;   // 2.2.4: copies that came from the Sheet are never sent back
+                recent.put(all.opt(i));
+            }
             p.put("sessions", recent);
             JSONObject ll = Store.object(c, "lastLive");
             if (ll.length() > 0) {

@@ -1,5 +1,5 @@
 /*
- FARR Q Charge - "View from anywhere"  (script 2.2.2)
+ FARR Q Charge - "View from anywhere"  (script 2.2.2, with Cost R on Meter sessions and the meter copy for Ver_FarrQ_2.2.4)
  A copy of the charge log in YOUR Google Sheet. The phones send to it; you open the Sheet from any country.
 
  ONE-TIME SETUP (about 5 minutes)
@@ -36,7 +36,7 @@ var TABS = {
   trips:    {name: 'Trips',          head: ['When', 'Km', 'kWh used', 'kWh/100km', 'Odometer', 'Battery %', 'Phone', 'Updated'], key: [0]},
   readings: {name: 'Readings',       head: ['When', 'Type', 'Odometer', 'Battery %', 'Where', 'Car km', 'Phone', 'Updated'], key: [0, 1], fillBlanksOnly: true},
   phones:   {name: 'Phones',         head: ['Phone', 'App version', 'Last sync', 'Entries', 'Sheet script'], key: [0]},
-  sessions: {name: 'Meter sessions', head: ['Started', 'Ended', 'kWh', 'Minutes', 'Peak W', 'Why it ended', 'Updated'], key: [0]},
+  sessions: {name: 'Meter sessions', head: ['Started', 'Ended', 'kWh', 'Minutes', 'Peak W', 'Why it ended', 'Updated', 'Cost R', 'Rate R/kWh'], key: [0]},
   detail:   {name: 'Charge detail',  head: ['Started', 'Ended', 'Minutes', 'Wall kWh', 'Battery kWh', 'Cost R', 'Peak W', 'Avg W', 'Avg A', 'Peak A', 'Why it ended', 'Before %', 'After %', 'How % is known', 'Lost kWh', 'Lost R', 'Rate R/kWh', 'Updated'], key: [0]},
   pct:      {name: 'Battery % readings', head: ['When', 'Battery %', 'Source', 'kWh delivered then', 'Charge started', 'Updated'], key: [0]},
   calc:     {name: 'Calculated %',   head: ['Charge started', 'Charge ended', 'Wall kWh', 'Added %', 'Before %', 'After %', 'Status', 'Method', 'Quality', 'Later reading at', 'Later odometer', 'Earlier reading at', 'Earlier %', 'Earlier odometer', 'Forward check %', 'Difference', 'Updated'], key: [0]},
@@ -72,8 +72,9 @@ function doPost(e) {
     }
     if (p.sessions && p.sessions.length) {
       n += upsert_(ss, TABS.sessions, p.sessions.filter(function (s) { return !s.demo; }).map(function (s) {
-        return [d_(s.start_ms || s.end_ms), d_(s.end_ms), s.kwh, s.duration_s ? Math.round(s.duration_s / 60) : '', s.peak_w, s.end_reason || '', now];
+        return [d_(s.start_ms || s.end_ms), d_(s.end_ms), s.kwh, s.duration_s ? Math.round(s.duration_s / 60) : '', s.peak_w, s.end_reason || '', now].concat(costCols_(s));
       }));
+      try { fixSessionHead_(ss); } catch (x3) { /* a header fix never stops the sync */ }
     }
     if (p.kind === 'app' && p.extra) {
       try { n += extra_(ss, p.extra, now); } catch (x2) { /* extra tabs never stop the main sync */ }
@@ -81,6 +82,7 @@ function doPost(e) {
     if (p.kind === 'meter' && p.live) live_(ss, p.live, now);
     var extra = {script: SCRIPT_VERSION};
     if (p.kind === 'app' && p.wantReadings) extra.readings = readings_(ss);
+    if (p.kind === 'app' && p.wantMeter) { try { extra.meter = meter_(ss); } catch (x4) { /* the meter copy never stops the sync */ } }
     return out_(true, 'Sheet updated (' + n + ' rows checked)', extra);
   } catch (err) {
     return out_(false, 'Script error: ' + err);
@@ -147,7 +149,52 @@ function readings_(ss) {
   return list;
 }
 
+/* Ver_FarrQ_2.2.4: the finished Shelly charges (newest 200) and the last EV METER block, so a phone away from home
+   can show them. Read only: nothing in the Sheet is changed here. Older apps never ask for this. */
+function meter_(ss) {
+  var out = {sessions: [], live: null};
+  var sh = ss.getSheetByName(TABS.sessions.name);
+  if (sh && sh.getLastRow() > 1) {
+    var rows = Math.min(sh.getLastRow() - 1, 200);
+    var data = sh.getRange(2, 1, rows, 9).getValues();
+    for (var i = 0; i < data.length; i++) {
+      var d = data[i];
+      var st = d[0] instanceof Date ? d[0].getTime() : 0, en = d[1] instanceof Date ? d[1].getTime() : 0;
+      if (!st || !en || !(+d[2] > 0)) continue;
+      out.sessions.push({start_ms: st, end_ms: en, kwh: +d[2], minutes: d[3], peak_w: d[4], end_reason: String(d[5] || ''), cost: d[7], tariff: d[8]});
+    }
+  }
+  var sm = ss.getSheetByName('Summary');
+  if (sm && sm.getLastRow() >= 7) {
+    var b = sm.getRange(1, 4, 7, 2).getValues();
+    if (String(b[0][0]).indexOf('EV METER') === 0 && b[1][1] instanceof Date) {
+      out.live = {updated_ms: b[1][1].getTime(), charging: String(b[2][1]) === 'yes', watts: b[3][1], today_kwh: b[4][1], month_kwh: b[5][1], total_kwh: b[6][1]};
+    }
+  }
+  return out;
+}
+
 function d_(ms) { return ms ? new Date(+ms) : ''; }
+
+/* 2.2.2 + cost: Cost R and Rate R/kWh for a Shelly session (the app's own cost, else kWh x rate) */
+var DEFAULT_RATE = 3.88;
+function costCols_(s) {
+  try {
+    var k = +s.kwh, rate = (+s.tariff > 0) ? +s.tariff : DEFAULT_RATE, c = '';
+    if (s.cost !== undefined && s.cost !== null && s.cost !== '' && isFinite(+s.cost)) c = +s.cost;
+    else if (isFinite(k)) c = Math.round(k * rate * 100) / 100;
+    return [c, rate];
+  } catch (e) { return ['', '']; }
+}
+
+/* an older "Meter sessions" tab has no Cost headings yet: add them once */
+function fixSessionHead_(ss) {
+  var sh = ss.getSheetByName(TABS.sessions.name);
+  if (!sh) return;
+  var h = sh.getRange(1, 8, 1, 2);
+  var v = h.getValues()[0];
+  if (v[0] === '' || v[1] === '') { h.setValues([['Cost R', 'Rate R/kWh']]); h.setFontWeight('bold'); }
+}
 
 function sheet_(ss, tab) {
   var sh = ss.getSheetByName(tab.name);
@@ -225,7 +272,10 @@ function summary_(ss, p, phone, now) {
     ['', ''],
     ['VERSIONS', ''], ['Sheet script', SCRIPT_VERSION], ['App (last sender)', String(p.app || '')]
   ];
+  var keep = null;
+  try { if (sh.getLastRow() >= 7) keep = sh.getRange(1, 4, 7, 2).getValues(); } catch (xk) { keep = null; }   // the EV METER block (columns D:E) survives the rebuild
   sh.clear();
+  if (keep && String(keep[0][0]).indexOf('EV METER') === 0) { try { sh.getRange(1, 4, 7, 2).setValues(keep); sh.getRange('D1').setFontWeight('bold'); sh.setColumnWidth(4, 180); } catch (xr) {} }
   sh.getRange(1, 1, v.length, 2).setValues(v.map(function (r) { return [r[0], r[1] == null ? '' : r[1]]; }));
   sh.getRange('A1').setFontWeight('bold'); sh.getRange('A9').setFontWeight('bold'); sh.getRange('A17').setFontWeight('bold'); sh.getRange('A25').setFontWeight('bold');
   sh.setColumnWidth(1, 200); sh.setColumnWidth(2, 180);

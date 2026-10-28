@@ -9,7 +9,7 @@ import org.json.JSONObject;
 
 /** Everything the 1.7 layer keeps on the phone (the 1.6 screens keep their own data in WebView localStorage). */
 final class Store {
-    static final String APP_VERSION = "Ver_FarrQ_2.2.3";
+    static final String APP_VERSION = "Ver_FarrQ_2.2.4";
     static final int MAX_SESSIONS = 5000;
     static final int MAX_ALERTS = 1000;
 
@@ -130,10 +130,30 @@ final class Store {
             if (keys.add(k)) { have.put(s); added++; }
         }
         if (added > 0) {
+            purgeSheetCopies(have);   // 2.2.4: a real session replaces the copy that came from the Sheet (and a copy that arrives after the real one is dropped)
             while (have.length() > MAX_SESSIONS) have.remove(0);
             putArray(c, key, have);
         }
         return added;
+    }
+
+    /** 2.2.4: removes sessions tagged from_sheet when this phone now holds a real (meter) session at the same time. */
+    static boolean purgeSheetCopies(JSONArray have) {
+        boolean changed = false;
+        try {
+            for (int i = have.length() - 1; i >= 0; i--) {
+                JSONObject s = have.optJSONObject(i);
+                if (s == null || !s.optBoolean("from_sheet")) continue;
+                long a = s.optLong("start_ms"), b = s.optLong("end_ms");
+                for (int j = 0; j < have.length(); j++) {
+                    JSONObject r = have.optJSONObject(j);
+                    if (r == null || r.optBoolean("from_sheet")) continue;
+                    long ra = r.optLong("start_ms"), rb = r.optLong("end_ms");
+                    if (Math.abs(ra - a) <= 60000L || (ra <= b && rb >= a)) { have.remove(i); changed = true; break; }
+                }
+            }
+        } catch (Exception ignored) { /* never stops a session from being stored */ }
+        return changed;
     }
 
     /** 2.2.3: sets one field on a stored session (found by its start time), for example the full-charge verdict. */
