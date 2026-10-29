@@ -5,7 +5,7 @@
 (function(){
 'use strict';
 const N=window.FarrNative||null;
-window.FARR_VER='Ver_FarrQ_2.2.8';
+window.FARR_VER='Ver_FarrQ_2.2.8.1';
 window.FARR_APP_URL='https://github.com/esp32alegriff-bit/farr-q-charge-apk/releases/latest';
 
 /* ---------- bridge ---------- */
@@ -212,6 +212,19 @@ function remoteEstRow(r,last){
     return h;
   }catch(e){return '';}
 }
+/* 2.2.8.1: km driven since the last charge = latest odometer minus the odometer at the latest charge entry. Read from this phone's own log only. */
+function kmSinceCharge(){
+  const L=(typeof E!=='undefined'&&E.length?E:[]);
+  const ch=L.filter(e=>e.kind==='charge'&&e.odo>0).reduce((a,b)=>!a||b.ts>a.ts?b:a,null);
+  const lt=L.filter(e=>e.odo>0).reduce((a,b)=>!a||b.ts>a.ts?b:a,null);
+  if(!ch||!lt)return null;
+  const km=lt.odo-ch.odo;
+  return km>=0?{km,since:ch.ts}:null;
+}
+function kmSinceChargeRow(){
+  try{const k=kmSinceCharge();return k?R('Km since last charge',n2(k.km,0)+' km'):'';}catch(e){return '';}
+}
+window.farrKmSinceCharge=kmSinceCharge;
 function remoteExtraRows(r){
   let h='';
   try{
@@ -221,7 +234,7 @@ function remoteExtraRows(r){
       h+=R('Last battery % logged',n2(last.pct,0)+'%'+(last.who?' · '+esc(last.who):''))+
          R('Logged',esc(tstamp(last.ts)))+
          (last.carKm!=null&&!isNaN(last.carKm)?R('Car said',n2(last.carKm,0)+' km'):'')+
-         (last.odo>0?R('Odometer',n2(last.odo,0)+' km'):'');
+         (last.odo>0?R('Odometer',n2(last.odo,0)+' km'):'')+kmSinceChargeRow(last);
     }
   }catch(e){}
   try{
@@ -860,6 +873,102 @@ window.addEventListener('load',()=>{
   document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&Date.now()-rmLast>30000)rmSoon(1500);});
 });
 
+
+/* ---------- 2.2.8.1: Car claim accuracy line graph (1 week, zoomable) ---------- */
+(function(){
+const DAY=864e5, FULLMAX=3650*DAY;
+let V=null; // {a,b} visible window in ms
+function pts(){
+  try{
+    const st=carStats(rowsFor('all'));
+    if(!st)return {p:[],avg:null};
+    const p=st.C.map(r=>{const real=r.pct*st.realPerPct;return {t:r.ts,v:100-Math.abs((real-r.carKm)/r.carKm*100)};}).sort((a,b)=>a.t-b.t);
+    return {p,avg:st.accuracy};
+  }catch(e){return {p:[],avg:null};}
+}
+function week(){const b=Date.now();return {a:b-7*DAY,b:b};}
+function trend(p,v){
+  const w=p.filter(x=>x.t>=v.a&&x.t<=v.b);
+  if(w.length<2)return 'Need at least 2 entries in this window to see a trend.';
+  const n=w.length, mt=w.reduce((x,q)=>x+q.t,0)/n, mv=w.reduce((x,q)=>x+q.v,0)/n;
+  let sxy=0,sxx=0;w.forEach(q=>{sxy+=(q.t-mt)*(q.v-mv);sxx+=(q.t-mt)*(q.t-mt);});
+  if(!(sxx>0))return 'Entries are too close in time for a trend.';
+  const span=Math.max(w[n-1].t-w[0].t,1), d=sxy/sxx*span;
+  const dir=Math.abs(d)<0.5?'Steady':d>0?'Rising':'Falling';
+  return dir+': '+(d>=0?'+':'')+d.toFixed(1)+' points across '+n+' entries.';
+}
+function dlabel(t){const d=new Date(t);return d.getDate()+'/'+(d.getMonth()+1);}
+function draw(){
+  const host=document.getElementById('gAcc');if(!host)return;
+  const {p,avg}=pts();
+  if(!p.length){host.innerHTML='<div class="small">Add the car screen range on the Anytime log to see accuracy over time.</div>';return;}
+  if(!V)V=week();
+  const W=320,H=210,L=34,Rr=10,T=12,B=26,pw=W-L-Rr,ph=H-T-B;
+  const vis=p.filter(x=>x.t>=V.a&&x.t<=V.b);
+  let lo=Math.min(...(vis.length?vis:p).map(x=>x.v),avg==null?1e9:avg), hi=Math.max(...(vis.length?vis:p).map(x=>x.v),avg==null?-1e9:avg);
+  lo=Math.floor((lo-3)/5)*5;hi=Math.ceil((hi+3)/5)*5;if(hi>100)hi=100;if(lo>=hi)lo=hi-10;
+  const X=t=>L+(t-V.a)/(V.b-V.a)*pw, Y=v=>T+(hi-v)/(hi-lo)*ph;
+  let g='';
+  for(let v=lo;v<=hi;v+=(hi-lo>30?10:5)){g+=`<line x1="${L}" x2="${W-Rr}" y1="${Y(v)}" y2="${Y(v)}" stroke="currentColor" opacity=".12"/><text x="${L-4}" y="${Y(v)+3}" font-size="9" text-anchor="end" fill="currentColor" opacity=".6">${v}%</text>`;}
+  const span=V.b-V.a, step=span>20*DAY?7*DAY:span>6*DAY?DAY:span>2*DAY?12*36e5:6*36e5;
+  for(let t=Math.ceil(V.a/step)*step;t<=V.b;t+=step){
+    const lab=step>=DAY?dlabel(t):(new Date(t).getHours()+'h');
+    g+=`<line x1="${X(t)}" x2="${X(t)}" y1="${T}" y2="${T+ph}" stroke="currentColor" opacity=".08"/><text x="${X(t)}" y="${H-10}" font-size="9" text-anchor="middle" fill="currentColor" opacity=".6">${lab}</text>`;
+  }
+  if(avg!=null&&avg>=lo&&avg<=hi)g+=`<line x1="${L}" x2="${W-Rr}" y1="${Y(avg)}" y2="${Y(avg)}" stroke="#d9a441" stroke-dasharray="4 3"/><text x="${W-Rr}" y="${Y(avg)-3}" font-size="9" text-anchor="end" fill="#d9a441">overall ${avg.toFixed(1)}%</text>`;
+  // line through points, clipped to the window via neighbours
+  const idx=p.map((x,i)=>i).filter(i=>p[i].t>=V.a&&p[i].t<=V.b);
+  const seq=[];
+  if(idx.length){const f=idx[0],l=idx[idx.length-1];if(f>0)seq.push(p[f-1]);idx.forEach(i=>seq.push(p[i]));if(l<p.length-1)seq.push(p[l+1]);}
+  else{const before=p.filter(x=>x.t<V.a).pop(), after=p.find(x=>x.t>V.b);if(before)seq.push(before);if(after)seq.push(after);}
+  if(seq.length>1)g+=`<clipPath id="accClip"><rect x="${L}" y="${T}" width="${pw}" height="${ph}"/></clipPath><polyline clip-path="url(#accClip)" fill="none" stroke="#4aa3ff" stroke-width="2" points="${seq.map(x=>X(x.t).toFixed(1)+','+Y(x.v).toFixed(1)).join(' ')}"/>`;
+  vis.forEach(x=>{g+=`<circle cx="${X(x.t).toFixed(1)}" cy="${Y(x.v).toFixed(1)}" r="3.5" fill="#4aa3ff" data-t="${x.t}" data-v="${x.v.toFixed(1)}" class="accDot"/>`;});
+  host.innerHTML=`<svg id="accSvg" viewBox="0 0 ${W} ${H}" style="touch-action:none;width:100%">${g}</svg>`+
+    `<div class="small" id="accTrend">${trend(p,V)}</div><div class="small" id="accTip">Tap a dot to read it. Drag to move. Pinch or scroll to zoom.</div>`+
+    `<div style="margin-top:8px"><button class="btn ghost" id="accReset">Reset to 1 week</button></div>`;
+  document.getElementById('accReset').onclick=function(){V=week();draw();};
+  const svg=document.getElementById('accSvg');
+  svg.querySelectorAll('.accDot').forEach(c=>c.addEventListener('click',()=>{
+    const tip=document.getElementById('accTip');if(tip)tip.textContent=new Date(+c.dataset.t).toLocaleString('en-ZA')+' · accuracy '+c.dataset.v+'%';
+  }));
+  if(!host.__acc){host.__acc=1;attach(host,L,pw);}
+}
+function clamp(a,b){
+  const minSpan=3*36e5;let sp=b-a;
+  if(sp<minSpan){const m=(a+b)/2;a=m-minSpan/2;b=m+minSpan/2;sp=minSpan;}
+  if(sp>FULLMAX){a=b-FULLMAX;}
+  return {a,b};
+}
+function attach(svg,L,pw){
+  const ptrs=new Map();let drag=null,pinch=null;
+  const tAt=cx=>{const sv=svg.querySelector('#accSvg')||svg;const r=sv.getBoundingClientRect();const fx=((cx-r.left)/r.width*320-L)/pw;return V.a+Math.min(1,Math.max(0,fx))*(V.b-V.a);};
+  const zoom=(f,cx)=>{const c=tAt(cx);V=clamp(c-(c-V.a)*f,c+(V.b-c)*f);draw();};
+  svg.addEventListener('wheel',e=>{e.preventDefault();zoom(e.deltaY>0?1.25:0.8,e.clientX);},{passive:false});
+  svg.addEventListener('pointerdown',e=>{
+    if(!e.target.closest||!e.target.closest('#accSvg'))return;
+    ptrs.set(e.pointerId,{x:e.clientX});
+    if(ptrs.size===1)drag={x:e.clientX,a:V.a,b:V.b,moved:false};
+    if(ptrs.size===2){const [q,r]=[...ptrs.values()];pinch={d:Math.abs(q.x-r.x),a:V.a,b:V.b,c:tAt((q.x+r.x)/2)};drag=null;}
+  });
+  svg.addEventListener('pointermove',e=>{
+    if(!ptrs.has(e.pointerId))return;ptrs.get(e.pointerId).x=e.clientX;
+    if(pinch&&ptrs.size===2){const [q,r]=[...ptrs.values()];const d=Math.abs(q.x-r.x);if(pinch.d>5&&d>5){const f=pinch.d/d;V=clamp(pinch.c-(pinch.c-pinch.a)*f,pinch.c+(pinch.b-pinch.c)*f);draw();}return;}
+    if(drag){const rect=(svg.querySelector('#accSvg')||svg).getBoundingClientRect();const dt=-(e.clientX-drag.x)/rect.width*320/pw*(drag.b-drag.a);if(Math.abs(e.clientX-drag.x)>4)drag.moved=true;if(drag.moved){V={a:drag.a+dt,b:drag.b+dt};draw();}}
+  });
+  const up=e=>{ptrs.delete(e.pointerId);if(ptrs.size<2)pinch=null;if(ptrs.size===0)drag=null;};
+  svg.addEventListener('pointerup',up);svg.addEventListener('pointercancel',up);
+}
+function ensure(){
+  if(document.getElementById('gAcc'))return;
+  const car=document.getElementById('gCar');if(!car||!car.parentNode)return;
+  const card=document.createElement('div');card.className='card';
+  card.innerHTML='<div class="label">Car claim accuracy over time (%)</div><div id="gAcc"></div>';
+  car.parentNode.parentNode.insertBefore(card,car.parentNode.nextSibling);
+}
+window.farrPaintAccGraph=function(){try{ensure();V=week();draw();}catch(e){}};
+window.farrAccTest={get:()=>V,pts:pts,draw:draw,trend:trend};
+})();
+
 /* ---------- screen changes (called from go()) ---------- */
 window.farrOnScreen=function(id){
   screen=id;
@@ -867,6 +976,7 @@ window.farrOnScreen=function(id){
   if(id==='home'){paintHomeCard();tick();relayLoop();}
   if(id==='meter'){paintMeter();paintSessions();loadMeterConfig();tick();}
   if(id==='relay'){RELAY=null;paintRelay();paintRelayAuto();loadMeterConfig();tick();relayLoop();}
+  if(id==='graph')window.farrPaintAccGraph();
   if(id==='alerts')paintAlerts();
   if(id==='conn'){paintConn();paintRemote();tick();}
   if(id==='info'){renderInfo();tick();}
