@@ -5,7 +5,7 @@
 (function(){
 'use strict';
 const N=window.FarrNative||null;
-window.FARR_VER='Ver_FarrQ_2.2.7';
+window.FARR_VER='Ver_FarrQ_2.2.8';
 window.FARR_APP_URL='https://github.com/esp32alegriff-bit/farr-q-charge-apk/releases/latest';
 
 /* ---------- bridge ---------- */
@@ -246,9 +246,22 @@ function remoteLiveHTML(){
       R('Day total then',n2(r.today,2)+' kWh · R'+n2((+r.today||0)*rate(),2))+
       R('Month total then',n2(r.month,2)+' kWh · R'+n2((+r.month||0)*rate(),2))+
       remoteExtraRows(r)+
+      `<div style="margin-top:10px"><button class="btn ghost" id="rmRefreshBtn" onclick="farrRefreshBlock()">Refresh latest data</button></div>`+
       `</div>`;
   }catch(e){return '';}
 }
+/* 2.2.8: the button at the bottom of the block. Same sync as "Save and send" / "Send now" in Connections: sends this phone's data and asks the Sheet for the latest block, readings and alerts. */
+window.farrRefreshBlock=async function(){
+  if(!rmOn()){say('Set up the Google Sheet first. Settings, Connections.');return;}
+  if(rmBusy){say('Already refreshing…');return;}
+  const b=document.getElementById('rmRefreshBtn'); if(b){b.disabled=true;b.textContent='Refreshing…';}
+  const before=rmInfoGet().okTs||0;
+  try{await rmSend(false);}catch(e){}
+  const i=rmInfoGet();
+  try{paintHomeCard();}catch(e){}
+  if((i.okTs||0)>before&&i.tryOk!==false)say('Latest data received');
+  else{say('Could not refresh: '+(i.err||'no answer'));const b2=document.getElementById('rmRefreshBtn');if(b2){b2.disabled=false;b2.textContent='Refresh latest data';}}
+};
 window.farrRemoteBlockHTML=remoteLiveHTML;window.farrRemoteExtraRows=remoteExtraRows;   /* 2.2.6: for the tests */
 function paintHomeCard(){
   const el=$('meterCard'); if(!el)return;

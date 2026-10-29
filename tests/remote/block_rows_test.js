@@ -111,6 +111,43 @@ const {chromium}=require(process.env.PW_MODULE||'playwright');
  const sent2=await pg.evaluate(()=>JSON.stringify(window.__calls.map(c=>c.a)));
  ok(!/Battery then|Time left then|battery_then/i.test(sent2),'the estimate is never sent to the Sheet');
 
+ // 2.2.8: "Refresh latest data" button at the bottom of the block
+ const ref=await pg.evaluate(async({now})=>{
+  const o={};
+  window.__readings=[];window.__meter={sessions:[],live:{updated_ms:now-30000,charging:true,watts:2650,today_kwh:3.1,month_kwh:80,total_kwh:900}};
+  await farrRemoteSend();await new Promise(r=>setTimeout(r,500));
+  o.htmlHas=farrRemoteBlockHTML().includes('Refresh latest data')&&farrRemoteBlockHTML().includes('farrRefreshBlock()');
+  o.last=farrRemoteBlockHTML().lastIndexOf('Refresh latest data')>farrRemoteBlockHTML().lastIndexOf('Last charge');
+  o.calls0=window.__calls.length;
+  // the Sheet now has newer data; the button must fetch it
+  window.__meter={sessions:[],live:{updated_ms:now+60000,charging:true,watts:2650,today_kwh:3.5,month_kwh:80,total_kwh:900}};
+  const btn=document.getElementById('rmRefreshBtn'); o.btnInDom=!!btn;
+  await farrRefreshBlock();
+  o.calls1=window.__calls.length;
+  o.kind=window.__calls[window.__calls.length-1].a.kind;
+  o.keys=Object.keys(window.__calls[window.__calls.length-1].a).filter(k=>k!=='extra').sort().join(',');   // 'extra' (the extra Sheet tabs) is an existing 2.2.2 field, sent only when due
+  o.todayAfter=JSON.parse(localStorage.getItem('farrq.remoteLive')).today;
+  return o;
+ },{now});
+ ok(ref.htmlHas,'the block has the button "Refresh latest data"');
+ ok(ref.last,'the button is at the bottom of the block');
+ ok(ref.btnInDom,'the button is on the Home screen');
+ ok(ref.calls1===ref.calls0+1&&ref.kind==='app','tapping it runs one normal sync (same as Send now)');
+ ok(ref.keys==='autoRemove,charges,kind,readings,sent,sessions,summary,trips,wantMeter,wantReadings','the sync sends exactly the 2.2.5 keys ('+ref.keys+')');
+ ok(Math.abs(ref.todayAfter-3.5)<1e-9,'the block data is the new Sheet data after the tap');
+ await pg.waitForTimeout(2500);
+ await pg.evaluate(()=>{window.__calls.length=0;});
+ await pg.waitForTimeout(1200);
+ const base=await pg.evaluate(()=>window.__calls.filter(c=>c.m==='remotePush').length);   // syncs the app starts on its own in the same time
+ await pg.evaluate(()=>{window.__calls.length=0;});
+ const realBtn=await pg.$('#rmRefreshBtn');
+ if(realBtn){await realBtn.scrollIntoViewIfNeeded();await realBtn.click();await pg.waitForTimeout(900);
+  const nreal=await pg.evaluate(()=>window.__calls.length+':'+window.__calls.map(c=>c.m+'/'+c.a.kind).join(','));
+  const pushes=await pg.evaluate(()=>window.__calls.filter(c=>c.m==='remotePush').length);
+  ok(pushes>=1&&pushes<=base+1,'a real tap on the button sends one sync ('+nreal+', own syncs in the same time: '+base+')');
+  ok((await pg.evaluate(()=>{const b=document.getElementById('rmRefreshBtn');return !b||(!b.disabled&&b.textContent==='Refresh latest data');})),'the button is ready again after the refresh');}
+ else ok(false,'real button found on the page');
+
  ok(errs.length===0,'no page errors'+(errs.length?': '+errs.join(' | '):''));
  await b.close();
  console.log(fail?('FAILED '+fail):'ALL PASS');process.exit(fail?1:0);
