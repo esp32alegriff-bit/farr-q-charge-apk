@@ -5,7 +5,7 @@
 (function(){
 'use strict';
 const N=window.FarrNative||null;
-window.FARR_VER='Ver_FarrQ_2.2.5';
+window.FARR_VER='Ver_FarrQ_2.2.6';
 window.FARR_APP_URL='https://github.com/esp32alegriff-bit/farr-q-charge-apk/releases/latest';
 
 /* ---------- bridge ---------- */
@@ -184,6 +184,29 @@ function paintLive(){
 /* ---------- Home card ---------- */
 /* 2.2.4/2.2.5: shown only when this phone cannot reach the meter (away from home). The phone at home copies the reading to the Sheet
    about every 5 minutes while charging (every 30 minutes otherwise), so it is labelled with that time and is not a live reading. */
+/* 2.2.6: extra rows for the block above, built only from data this phone already has (the log entries and the finished charges copied from the Sheet).
+   Nothing new is asked from the Sheet and nothing new is sent, so a phone on 2.2.5 is not affected. */
+function remoteExtraRows(){
+  let h='';
+  try{
+    const last=(typeof E!=='undefined'&&E.length?E:[]).reduce((a,b)=>!a||b.ts>a.ts?b:a,null);
+    if(last&&last.pct!=null&&!isNaN(last.pct)){
+      h+=R('Last battery % logged',n2(last.pct,0)+'%'+(last.who?' · '+esc(last.who):''))+
+         R('Logged',esc(tstamp(last.ts)))+
+         (last.carKm!=null&&!isNaN(last.carKm)?R('Car said',n2(last.carKm,0)+' km'):'')+
+         (last.odo>0?R('Odometer',n2(last.odo,0)+' km'):'');
+    }
+  }catch(e){}
+  try{
+    const m=(typeof MS!=='undefined'&&MS.length?MS:[]).reduce((a,b)=>+b.end_ms>0&&(!a||+b.end_ms>+a.end_ms)?b:a,null);
+    if(m&&+m.end_ms>0&&+m.kwh>0){
+      const mins=Math.round((+m.end_ms-(+m.start_ms||+m.end_ms))/60000);
+      const cost=(m.cost!=null&&m.cost!==''&&isFinite(+m.cost))?+m.cost:(+m.kwh)*rate();
+      h+=R('Last charge ended',esc(tstamp(+m.end_ms)))+R('Last charge',n2(m.kwh,2)+' kWh · '+mins+' min · R'+n2(cost,2));
+    }
+  }catch(e){}
+  return h;
+}
 function remoteLiveHTML(){
   try{
     const r=JSON.parse(localStorage.getItem('farrq.remoteLive')||'null');
@@ -195,9 +218,11 @@ function remoteLiveHTML(){
       (r.charging?R('Power then',n2(r.watts,0)+' W'):'')+
       R('Day total then',n2(r.today,2)+' kWh · R'+n2((+r.today||0)*rate(),2))+
       R('Month total then',n2(r.month,2)+' kWh · R'+n2((+r.month||0)*rate(),2))+
+      remoteExtraRows()+
       `</div>`;
   }catch(e){return '';}
 }
+window.farrRemoteBlockHTML=remoteLiveHTML;window.farrRemoteExtraRows=remoteExtraRows;   /* 2.2.6: for the tests */
 function paintHomeCard(){
   const el=$('meterCard'); if(!el)return;
   const L=LIVE, st=statusText(L), v=L&&L.live;
@@ -674,6 +699,7 @@ function rmMerge(rows){
   if(!rows||!rows.length||typeof E==='undefined')return res;
   let epoch=0; try{epoch=+localStorage.getItem('farrq.rmEpoch')||0;}catch(e){}
   const have=new Map(E.map(e=>[e.kind+'|'+e.ts,e]));
+  let whoSet=false;   /* 2.2.6: remember who logged an entry (the Sheet keeps the first sender); nothing about this is sent back */
   for(const r of rows){
     const ts=+r.ts, odo=parseFloat(r.odo), pct=parseFloat(r.pct), kind=r.kind;
     if(!ts||isNaN(odo)||isNaN(pct)||!(kind==='trip'||kind==='charge'||kind==='start'))continue;
@@ -685,15 +711,17 @@ function rmMerge(rows){
       const e={kind,ts,odo,pct};
       if(kind==='charge'){if(where)e.where=where;else e.unlogged=true;}
       if(car!=null&&!isNaN(car))e.carKm=car;
+      if(r.phone)e.who=String(r.phone);
       E.push(e);have.set(kind+'|'+ts,e);res.added++;
     }else{
+      if(!loc.who&&r.phone){loc.who=String(r.phone);whoSet=true;}
       if(kind==='charge'&&!loc.where&&where){loc.where=where;delete loc.unlogged;res.filled++;}
       if(loc.carKm==null&&car!=null&&!isNaN(car)){loc.carKm=car;res.filled++;}
     }
   }
   const starts=E.filter(e=>e.kind==='start').sort((a,b)=>a.ts-b.ts);
   for(let i=1;i<starts.length;i++){E.splice(E.indexOf(starts[i]),1);res.filled++;}
-  if(res.added||res.filled){
+  if(res.added||res.filled||whoSet){
     E.sort((a,b)=>a.ts-b.ts);
     (rmSaveOrig||window.save)();
     try{renderAll();}catch(e){}
