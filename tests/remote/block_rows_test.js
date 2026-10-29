@@ -70,6 +70,47 @@ const {chromium}=require(process.env.PW_MODULE||'playwright');
  const t2=(await pg.evaluate(()=>farrRemoteBlockHTML())).replace(/<[^>]*>/g,' ').replace(/\s+/g,' ');
  ok(/Last battery % logged\s*85%\s/.test(t2)&&!/85%\s*·/.test(t2),'no phone name: shows 85% with no name, no error');
 
+ // 2.2.7: estimated battery % = last logged % + energy delivered since, same maths as the Home "Live charge estimate"
+ const est=await pg.evaluate(async({now,H})=>{
+  const out={};
+  const d=new Date(now);d.setHours(0,0,0,0);const dayMs=d.getTime();
+  const A={start_ms:now-0.8*H,end_ms:now-0.4*H,kwh:5.5,minutes:24,peak_w:2800,end_reason:'below_threshold',cost:21.34,tariff:3.88};
+  const todayDone=A.end_ms>=dayMs?5.5:0;
+  // 50% was logged 54 min ago (newer than every earlier entry). One charge of 5.5 kWh ended 24 min ago. A charge of 2.2 kWh is running now.
+  window.__readings=[{ts:now-0.9*H,kind:'trip',odo:1200,pct:50,where:'',carKm:200,phone:'Estelle the Wife'}];
+  window.__meter={sessions:[A],live:{updated_ms:now-30000,charging:true,watts:2600,today_kwh:todayDone+2.2,month_kwh:80,total_kwh:900}};
+  window.__store.length=0;   // only this scenario's charge is on the phone
+  await farrRemoteSend();await new Promise(r=>setTimeout(r,800));
+  out.html=farrRemoteBlockHTML();
+  // same data, but not charging: only the finished charge counts
+  window.__meter={sessions:[A],live:{updated_ms:now-30000,charging:false,watts:0,today_kwh:todayDone,month_kwh:80,total_kwh:900}};
+  await farrRemoteSend();await new Promise(r=>setTimeout(r,800));
+  out.html2=farrRemoteBlockHTML();
+  // a newer log (70%) than every charge, not charging: no energy since, so no estimate row
+  window.__readings=[{ts:now-0.2*H,kind:'trip',odo:1210,pct:70,where:'',carKm:260,phone:'Estelle the Wife'}];
+  window.__meter={sessions:[A],live:{updated_ms:now-30000,charging:false,watts:0,today_kwh:0,month_kwh:80,total_kwh:900}};
+  await farrRemoteSend();await new Promise(r=>setTimeout(r,800));
+  out.html3=farrRemoteBlockHTML();
+  return out;
+ },{now,H});
+ const tx=h=>h.replace(/<[^>]*>/g,' ').replace(/\s+/g,' ');
+ // the dot matrix display's own maths: 42.7 kWh pack, 10% loss, whole % cut off, minutes at the present power
+ const dp=since=>Math.min(100,50+since*0.9/42.7*100);
+ const dmin=(p,w)=>Math.round((100-p)/100*42.7/(w/1000*0.9)*60);
+ const fmt=m=>m>=60?Math.floor(m/60)+' h '+(m%60)+' min':m+' min';
+ const m1=tx(est.html).match(/Battery then \(estimated\)\s*≈\s*(\d+)%/);
+ ok(m1&&+m1[1]===Math.floor(dp(7.7)),'charging: finished 5.5 kWh + running 2.2 kWh = 7.7 kWh, display maths ('+(m1?m1[1]:'none')+'% expected '+Math.floor(dp(7.7))+'%)');
+ ok(!m1||+m1[1]!==Math.floor(dp(13.2)),'the running part is not counted twice');
+ const t1=tx(est.html).match(/Time left then \(estimated\)\s*([^A-Z]*?)\s*(Last battery|$)/);
+ ok(t1&&t1[1].trim()===fmt(dmin(dp(7.7),2600)),'time left at 2600 W, display maths ('+(t1?t1[1].trim():'none')+' expected '+fmt(dmin(dp(7.7),2600))+')');
+ const m2=tx(est.html2).match(/Battery then \(estimated\)\s*≈\s*(\d+)%/);
+ ok(m2&&+m2[1]===Math.floor(dp(5.5)),'not charging: only the finished 5.5 kWh counted ('+(m2?m2[1]:'none')+'%)');
+ ok(!/Time left then/.test(tx(est.html2)),'not charging: no time left row');
+ ok(!/Battery then \(estimated\)/.test(tx(est.html3)),'nothing delivered since the last log: no estimate row');
+ ok(/Last battery % logged\s*50%/.test(tx(est.html)),'the real logged % is still shown beside the estimate');
+ const sent2=await pg.evaluate(()=>JSON.stringify(window.__calls.map(c=>c.a)));
+ ok(!/Battery then|Time left then|battery_then/i.test(sent2),'the estimate is never sent to the Sheet');
+
  ok(errs.length===0,'no page errors'+(errs.length?': '+errs.join(' | '):''));
  await b.close();
  console.log(fail?('FAILED '+fail):'ALL PASS');process.exit(fail?1:0);

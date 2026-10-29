@@ -5,7 +5,7 @@
 (function(){
 'use strict';
 const N=window.FarrNative||null;
-window.FARR_VER='Ver_FarrQ_2.2.6';
+window.FARR_VER='Ver_FarrQ_2.2.7';
 window.FARR_APP_URL='https://github.com/esp32alegriff-bit/farr-q-charge-apk/releases/latest';
 
 /* ---------- bridge ---------- */
@@ -186,11 +186,38 @@ function paintLive(){
    about every 5 minutes while charging (every 30 minutes otherwise), so it is labelled with that time and is not a live reading. */
 /* 2.2.6: extra rows for the block above, built only from data this phone already has (the log entries and the finished charges copied from the Sheet).
    Nothing new is asked from the Sheet and nothing new is sent, so a phone on 2.2.5 is not affected. */
-function remoteExtraRows(){
+/* 2.2.7: battery % and time left, worked out the same way as the dot matrix display (same pack size 42.7 kWh, same 10% loss, whole % cut off, minutes at the present power).
+   The start is the last logged battery %. The energy since then is the finished charges after it plus the running charge. The running charge is the block's
+   day total minus the finished charges of that day (the day total is built the same way on the phone at home). */
+const DISP_PACK=42.7, DISP_LOSS=0.10;
+function remoteEstRow(r,last){
+  try{
+    if(!r||!(r.at>0)||!last||!(last.ts>0)||last.ts>r.at)return '';
+    const d=new Date(r.at);d.setHours(0,0,0,0);const dayMs=d.getTime();
+    let since=0,doneToday=0;
+    for(const s of (typeof MS!=='undefined'&&MS.length?MS:[])){
+      const st=+s.start_ms||+s.end_ms,en=+s.end_ms,k=+s.kwh;
+      if(!(en>0&&k>0))continue;
+      if(en>=dayMs&&en<=r.at+60000)doneToday+=k;
+      if(en>last.ts&&en<=r.at+60000){const span=en-st;since+=span>0?k*Math.min(1,(en-Math.max(st,last.ts))/span):k;}
+    }
+    if(r.charging)since+=Math.max(0,(+r.today||0)-doneToday);
+    if(!(since>=0.05)||isNaN(+last.pct))return '';
+    const p=Math.min(100,+last.pct+since*(1-DISP_LOSS)/DISP_PACK*100);
+    let h=R('Battery then (estimated)','≈ '+Math.floor(p)+'%');
+    if(r.charging&&+r.watts>=500){
+      const min=p>=100?0:Math.min(5999,Math.round((100-p)/100*DISP_PACK/((+r.watts)/1000*(1-DISP_LOSS))*60));
+      h+=R('Time left then (estimated)',p>=100?'About full':(min>=60?Math.floor(min/60)+' h '+(min%60)+' min':min+' min'));
+    }
+    return h;
+  }catch(e){return '';}
+}
+function remoteExtraRows(r){
   let h='';
   try{
     const last=(typeof E!=='undefined'&&E.length?E:[]).reduce((a,b)=>!a||b.ts>a.ts?b:a,null);
     if(last&&last.pct!=null&&!isNaN(last.pct)){
+      h+=remoteEstRow(r,last);
       h+=R('Last battery % logged',n2(last.pct,0)+'%'+(last.who?' · '+esc(last.who):''))+
          R('Logged',esc(tstamp(last.ts)))+
          (last.carKm!=null&&!isNaN(last.carKm)?R('Car said',n2(last.carKm,0)+' km'):'')+
@@ -218,7 +245,7 @@ function remoteLiveHTML(){
       (r.charging?R('Power then',n2(r.watts,0)+' W'):'')+
       R('Day total then',n2(r.today,2)+' kWh · R'+n2((+r.today||0)*rate(),2))+
       R('Month total then',n2(r.month,2)+' kWh · R'+n2((+r.month||0)*rate(),2))+
-      remoteExtraRows()+
+      remoteExtraRows(r)+
       `</div>`;
   }catch(e){return '';}
 }
