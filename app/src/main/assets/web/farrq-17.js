@@ -5,7 +5,7 @@
 (function(){
 'use strict';
 const N=window.FarrNative||null;
-window.FARR_VER='Ver_FarrQ_2.2.8.1';
+window.FARR_VER='Ver_FarrQ_2.2.8.2';
 window.FARR_APP_URL='https://github.com/esp32alegriff-bit/farr-q-charge-apk/releases/latest';
 
 /* ---------- bridge ---------- */
@@ -213,6 +213,25 @@ function remoteEstRow(r,last){
   }catch(e){return '';}
 }
 /* 2.2.8.1: km driven since the last charge = latest odometer minus the odometer at the latest charge entry. Read from this phone's own log only. */
+/* 2.2.8.2: Home charging this calendar month, from this phone's own charge log (same log the Sheet "Charge log" copies). Home only, Station excluded. Measured where the Shelly meter covers the charge, estimated from battery % otherwise. */
+function homeMonthStats(now){
+  const d=new Date(now||Date.now()), from=new Date(d.getFullYear(),d.getMonth(),1).getTime();
+  const rows=derive().filter(x=>x.type==='charge'&&x.where!=='Station'&&x.ts>=from&&isFinite(+x.wall));
+  const a={kwh:0,cost:0,mKwh:0,mCost:0,eKwh:0,eCost:0,n:rows.length,from:rows.length?rows.reduce((m,x)=>Math.min(m,x.ts),1e15):null};
+  rows.forEach(x=>{const k=+x.wall||0,c=+x.cost||0;a.kwh+=k;a.cost+=c;if(x.measured){a.mKwh+=k;a.mCost+=c;}else{a.eKwh+=k;a.eCost+=c;}});
+  return a;
+}
+function homeMonthRows(){
+  try{
+    const a=homeMonthStats();if(!a.n)return '';
+    const since=new Date(a.from).toLocaleDateString('en-ZA',{day:'numeric',month:'short'});
+    return R('Home charging this month (since '+esc(since)+')',n2(a.kwh,2)+' kWh · R'+n2(a.cost,2))+
+      R('· measured by meter',n2(a.mKwh,2)+' kWh · R'+n2(a.mCost,2))+
+      R('· estimated from battery %',n2(a.eKwh,2)+' kWh · R'+n2(a.eCost,2))+
+      `<div class="small" style="margin:4px 0 6px">Source: this phone's charge log, Home only. Station charges left out. Rate is your app setting.</div>`;
+  }catch(e){return '';}
+}
+window.farrHomeMonth=homeMonthStats;
 function kmSinceCharge(){
   const L=(typeof E!=='undefined'&&E.length?E:[]);
   const ch=L.filter(e=>e.kind==='charge'&&e.odo>0).reduce((a,b)=>!a||b.ts>a.ts?b:a,null);
@@ -258,6 +277,7 @@ function remoteLiveHTML(){
       (r.charging?R('Power then',n2(r.watts,0)+' W'):'')+
       R('Day total then',n2(r.today,2)+' kWh · R'+n2((+r.today||0)*rate(),2))+
       R('Month total then',n2(r.month,2)+' kWh · R'+n2((+r.month||0)*rate(),2))+
+      homeMonthRows()+
       remoteExtraRows(r)+
       `<div style="margin-top:10px"><button class="btn ghost" id="rmRefreshBtn" onclick="farrRefreshBlock()">Refresh latest data</button></div>`+
       `</div>`;
