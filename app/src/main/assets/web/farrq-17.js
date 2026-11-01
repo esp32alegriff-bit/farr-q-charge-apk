@@ -5,7 +5,7 @@
 (function(){
 'use strict';
 const N=window.FarrNative||null;
-window.FARR_VER='Ver_FarrQ_2.2.8.2';
+window.FARR_VER='Ver_FarrQ_2.2.8.3';
 window.FARR_APP_URL='https://github.com/esp32alegriff-bit/farr-q-charge-apk/releases/latest';
 
 /* ---------- bridge ---------- */
@@ -190,9 +190,9 @@ function paintLive(){
    The start is the last logged battery %. The energy since then is the finished charges after it plus the running charge. The running charge is the block's
    day total minus the finished charges of that day (the day total is built the same way on the phone at home). */
 const DISP_PACK=42.7, DISP_LOSS=0.10;
-function remoteEstRow(r,last){
+function remoteEstCalc(r,last){
   try{
-    if(!r||!(r.at>0)||!last||!(last.ts>0)||last.ts>r.at)return '';
+    if(!r||!(r.at>0)||!last||!(last.ts>0)||last.ts>r.at)return null;
     const d=new Date(r.at);d.setHours(0,0,0,0);const dayMs=d.getTime();
     let since=0,doneToday=0;
     for(const s of (typeof MS!=='undefined'&&MS.length?MS:[])){
@@ -202,36 +202,114 @@ function remoteEstRow(r,last){
       if(en>last.ts&&en<=r.at+60000){const span=en-st;since+=span>0?k*Math.min(1,(en-Math.max(st,last.ts))/span):k;}
     }
     if(r.charging)since+=Math.max(0,(+r.today||0)-doneToday);
-    if(!(since>=0.05)||isNaN(+last.pct))return '';
+    if(!(since>=0.05)||isNaN(+last.pct))return null;
     const p=Math.min(100,+last.pct+since*(1-DISP_LOSS)/DISP_PACK*100);
-    let h=R('Battery then (estimated)','≈ '+Math.floor(p)+'%');
-    if(r.charging&&+r.watts>=500){
-      const min=p>=100?0:Math.min(5999,Math.round((100-p)/100*DISP_PACK/((+r.watts)/1000*(1-DISP_LOSS))*60));
-      h+=R('Time left then (estimated)',p>=100?'About full':(min>=60?Math.floor(min/60)+' h '+(min%60)+' min':min+' min'));
-    }
+    let min=null;
+    if(r.charging&&+r.watts>=500)min=p>=100?0:Math.min(5999,Math.round((100-p)/100*DISP_PACK/((+r.watts)/1000*(1-DISP_LOSS))*60));
+    return {p,min};
+  }catch(e){return null;}
+}
+function remoteEstRow(r,last){
+  try{
+    const c=remoteEstCalc(r,last);if(!c)return '';
+    let h=R('Battery then (estimated)','≈ '+Math.floor(c.p)+'%');
+    if(c.min!=null)h+=R('Time left then (estimated)',c.p>=100?'About full':(c.min>=60?Math.floor(c.min/60)+' h '+(c.min%60)+' min':c.min+' min'));
     return h;
   }catch(e){return '';}
 }
 /* 2.2.8.1: km driven since the last charge = latest odometer minus the odometer at the latest charge entry. Read from this phone's own log only. */
-/* 2.2.8.2: Home charging this calendar month, from this phone's own charge log (same log the Sheet "Charge log" copies). Home only, Station excluded. Measured where the Shelly meter covers the charge, estimated from battery % otherwise. */
-function homeMonthStats(now){
+/* 2.2.8.3: Home charging this calendar month, counted by WHEN THE ENERGY WAS CHARGED, not by the date a charge was logged.
+   Measured = the meter's finished sessions (the part of a session that falls inside the month) plus the charge running at the time of the copy.
+   Estimated = Home/Solar charge log rows with no meter session behind them, from battery %. Station left out. */
+function runningKwh(r){
+  try{
+    if(!r||!r.charging)return 0;
+    const d=new Date(r.at);d.setHours(0,0,0,0);const dayMs=d.getTime();let done=0;
+    for(const s of (typeof MS!=='undefined'&&MS.length?MS:[])){const en=+s.end_ms,k=+s.kwh;if(en>=dayMs&&en<=r.at+60000&&k>0)done+=k;}
+    return Math.max(0,(+r.today||0)-done);
+  }catch(e){return 0;}
+}
+function monthSessions(from){
+  const out=[];
+  for(const s of (typeof MS!=='undefined'&&MS.length?MS:[])){
+    const en=+s.end_ms,k=+s.kwh,st=+s.start_ms||en;
+    if(!(en>0&&k>0)||en<from)continue;
+    const frac=st>=from||en<=st?1:(en-from)/(en-st);
+    const cost=(s.cost!=null&&s.cost!==''&&isFinite(+s.cost))?+s.cost:(+s.kwh)*rate();
+    out.push({st,en,kwh:k*frac,cost:cost*frac});
+  }
+  return out.sort((a,b)=>a.st-b.st);
+}
+function homeMonthStats(now,r){
   const d=new Date(now||Date.now()), from=new Date(d.getFullYear(),d.getMonth(),1).getTime();
-  const rows=derive().filter(x=>x.type==='charge'&&x.where!=='Station'&&x.ts>=from&&isFinite(+x.wall));
-  const a={kwh:0,cost:0,mKwh:0,mCost:0,eKwh:0,eCost:0,n:rows.length,from:rows.length?rows.reduce((m,x)=>Math.min(m,x.ts),1e15):null};
-  rows.forEach(x=>{const k=+x.wall||0,c=+x.cost||0;a.kwh+=k;a.cost+=c;if(x.measured){a.mKwh+=k;a.mCost+=c;}else{a.eKwh+=k;a.eCost+=c;}});
+  const a={kwh:0,cost:0,mKwh:0,mCost:0,eKwh:0,eCost:0,n:0,sessions:0,pauses:0,running:0,from};
+  const ss=monthSessions(from);
+  ss.forEach(x=>{a.mKwh+=x.kwh;a.mCost+=x.cost;});
+  a.sessions=ss.length;
+  for(let i=1;i<ss.length;i++){const gap=ss[i].st-ss[i-1].en;if(gap>=0&&gap<=10*60000)a.pauses++;}
+  if(r&&r.charging&&r.at>=from){const k=runningKwh(r);if(k>0){a.running=k;a.mKwh+=k;a.mCost+=k*rate();a.sessions++;}}
+  derive().filter(x=>x.type==='charge'&&x.where!=='Station'&&!x.measured&&!x.auto&&x.ts>=from&&isFinite(+x.wall)).forEach(x=>{a.eKwh+=+x.wall||0;a.eCost+=+x.cost||0;a.n++;});
+  a.kwh=a.mKwh+a.eKwh;a.cost=a.mCost+a.eCost;a.n+=a.sessions;
   return a;
 }
-function homeMonthRows(){
-  try{
-    const a=homeMonthStats();if(!a.n)return '';
-    const since=new Date(a.from).toLocaleDateString('en-ZA',{day:'numeric',month:'short'});
-    return R('Home charging this month (since '+esc(since)+')',n2(a.kwh,2)+' kWh · R'+n2(a.cost,2))+
-      R('· measured by meter',n2(a.mKwh,2)+' kWh · R'+n2(a.mCost,2))+
-      R('· estimated from battery %',n2(a.eKwh,2)+' kWh · R'+n2(a.eCost,2))+
-      `<div class="small" style="margin:4px 0 6px">Source: this phone's charge log, Home only. Station charges left out. Rate is your app setting.</div>`;
-  }catch(e){return '';}
+const hmClock=ts=>new Date(ts).toLocaleTimeString('en-ZA',{hour:'2-digit',minute:'2-digit'});
+const hmDur=min=>min>=60?Math.floor(min/60)+' h '+(min%60)+' min':Math.max(0,Math.round(min))+' min';
+const hmRand=v=>'R'+n2(v,2);
+function hmHead(t,sub){return `<div class="label" style="margin:16px 0 4px;padding-top:10px;border-top:2px solid var(--line,#8884)">${esc(t)}</div>`+(sub?`<div class="small" style="margin:0 0 4px">${esc(sub)}</div>`:'');}
+/* 2.2.8.3: the five groups under the EV meter block. Everything is worked out on this phone from the block, the log and the meter sessions already copied. Nothing is sent. */
+function homeSummaryGroups(r){
+  const NA='--';let h='';
+  const now=Date.now(), dNow=new Date(r.at||now), rt=rate();
+  const dayMs=new Date(dNow.getFullYear(),dNow.getMonth(),dNow.getDate()).getTime();
+  const run=runningKwh(r), watts=+r.watts||0;
+  const last=(typeof E!=='undefined'&&E.length?E:[]).reduce((a,b)=>!a||b.ts>a.ts?b:a,null);
+  const est=remoteEstCalc(r,last);
+  const todayDone=monthSessions(dayMs).filter(x=>x.en<=r.at+60000);
+  /* A: today */
+  h+=hmHead('A · Today','Worked out as of the Last copied time.');
+  if(r.charging&&run>0&&watts>=500){
+    const mins=run/(watts/1000)*60;
+    h+=R('Charging for (about)',hmDur(mins))+R('Started at (about)',hmClock(r.at-mins*60000));
+  }else{h+=R('Charging for (about)',NA)+R('Started at (about)',NA);}
+  h+=R('This charge so far',r.charging&&run>0?n2(run,2)+' kWh · '+hmRand(run*rt):NA);
+  h+=R('Full at (about)',est&&est.min!=null?(est.p>=100?'Full':hmClock(r.at+est.min*60000)):NA);
+  h+=R('Charges today',String(todayDone.length+(r.charging&&run>0?1:0)));
+  /* B: this month */
+  const m=homeMonthStats(r.at||now,r);
+  const dom=Math.max(1,dNow.getDate()), dim=new Date(dNow.getFullYear(),dNow.getMonth()+1,0).getDate();
+  h+=hmHead('B · This month','By when the energy was charged. Home only, Station left out.');
+  h+=R('Month cost so far',n2(m.kwh,2)+' kWh · '+hmRand(m.cost));
+  h+=R('· measured by meter',n2(m.mKwh,2)+' kWh · '+hmRand(m.mCost));
+  h+=R('· estimated from battery %',n2(m.eKwh,2)+' kWh · '+hmRand(m.eCost));
+  h+=R('Average per day',n2(m.kwh/dom,2)+' kWh · '+hmRand(m.cost/dom));
+  h+=R('Month bill, if it carries on (a guess)',hmRand(m.cost/dom*dim));
+  h+=R('Meter sessions this month',String(m.sessions));
+  h+=R('Meter total, ever',r.total!=null&&!isNaN(+r.total)?n2(r.total,1)+' kWh':NA);
+  /* C: last finished charge */
+  const ss=monthSessions(0).filter(x=>x.en<=r.at+60000);const lc=ss.length?ss.reduce((a,b)=>b.en>a.en?b:a):null;
+  h+=hmHead('C · Last finished charge');
+  h+=R('Last charge',lc?n2(lc.kwh,2)+' kWh · '+hmRand(lc.cost):NA);
+  h+=R('Started and ended',lc?hmClock(lc.st)+' to '+hmClock(lc.en)+(new Date(lc.en).toDateString()!==new Date(lc.st).toDateString()||new Date(lc.en).toDateString()!==dNow.toDateString()?' ('+new Date(lc.en).toLocaleDateString('en-ZA',{day:'numeric',month:'short'})+')':''):NA);
+  h+=R('Pauses this month (under 10 min)',String(m.pauses));
+  /* D: car use this month */
+  const rowsM=derive().filter(x=>x.ts>=m.from), sm=summ(rowsM);
+  h+=hmHead('D · Car use this month');
+  h+=R('Km this month',sm.km>0?n2(sm.km,0)+' km':NA);
+  h+=R('kWh per 100 km',sm.eff!=null?n2(sm.eff,1):NA);
+  h+=R('Cost per km',sm.perKm!=null?hmRand(sm.perKm):NA);
+  h+=R('Km since last charge',(function(){try{const k=kmSinceCharge();return k?n2(k.km,0)+' km':NA;}catch(e){return NA;}})());
+  /* E: settings and health */
+  const odo=(typeof E!=='undefined'&&E.length?E:[]).filter(e=>e.odo>0).reduce((a,b)=>!a||b.ts>a.ts?b:a,null);
+  const ageMin=(now-r.at)/60000;
+  h+=hmHead('E · Settings and health');
+  h+=R('Home rate (app setting)','R'+n2(rt,2)+' per kWh');
+  h+=R('Charging loss (app setting)',n2(S.loss,0)+'%');
+  h+=R('Home phone last sent',esc(ago(r.at))+' · '+(ageMin<=45?'recent':'old'));
+  h+=R('Odometer',odo?n2(odo.odo,0)+' km':NA);
+  return h;
 }
-window.farrHomeMonth=homeMonthStats;
+function homeMonthRows(){return '';}   /* 2.2.8.3: replaced by the B group (kept so older tests find the name) */
+window.farrHomeMonth=homeMonthStats;window.farrHomeGroups=homeSummaryGroups;
 function kmSinceCharge(){
   const L=(typeof E!=='undefined'&&E.length?E:[]);
   const ch=L.filter(e=>e.kind==='charge'&&e.odo>0).reduce((a,b)=>!a||b.ts>a.ts?b:a,null);
@@ -277,8 +355,8 @@ function remoteLiveHTML(){
       (r.charging?R('Power then',n2(r.watts,0)+' W'):'')+
       R('Day total then',n2(r.today,2)+' kWh · R'+n2((+r.today||0)*rate(),2))+
       R('Month total then',n2(r.month,2)+' kWh · R'+n2((+r.month||0)*rate(),2))+
-      homeMonthRows()+
       remoteExtraRows(r)+
+      (function(){try{return homeSummaryGroups(r);}catch(e){return '';}})()+
       `<div style="margin-top:10px"><button class="btn ghost" id="rmRefreshBtn" onclick="farrRefreshBlock()">Refresh latest data</button></div>`+
       `</div>`;
   }catch(e){return '';}

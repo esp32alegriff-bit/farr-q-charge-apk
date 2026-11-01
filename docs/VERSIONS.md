@@ -28,3 +28,4 @@ Where to see it
 | Ver_FarrQ_2.2.8 | 2.2.5 (unchanged) | "Refresh latest data" button at the bottom of the block "EV meter, copied from the Sheet": the same sync as Send now in Connections, started from Home |
 | Ver_FarrQ_2.2.8.1 | 2.2.5 (unchanged) | Block "EV meter, copied from the Sheet" shows Km since last charge. Graphs screen has a zoomable 1-week line graph of Car claim accuracy %, with a trend note. Reads this phone's own log only |
 | Ver_FarrQ_2.2.8.2 | 2.2.5 (unchanged) | Block "EV meter, copied from the Sheet" shows Home charging this month (kWh and R), split into measured by meter and estimated from battery %. Station left out. Reads this phone's own log only |
+| Ver_FarrQ_2.2.8.3 | 2.2.5 (unchanged) | Home charging this month now counted by charge time (was by log date). EV meter block gets groups A-E: today, this month, last finished charge, car use, settings and health. Reads this phone only. Estelle's phone need not update |
