@@ -5,7 +5,7 @@
 (function(){
 'use strict';
 const N=window.FarrNative||null;
-window.FARR_VER='Ver_FarrQ_2.2.8.3';
+window.FARR_VER='Ver_FarrQ_2.2.8.4';
 window.FARR_APP_URL='https://github.com/esp32alegriff-bit/farr-q-charge-apk/releases/latest';
 
 /* ---------- bridge ---------- */
@@ -374,7 +374,130 @@ window.farrRefreshBlock=async function(){
   else{say('Could not refresh: '+(i.err||'no answer'));const b2=document.getElementById('rmRefreshBtn');if(b2){b2.disabled=false;b2.textContent='Refresh latest data';}}
 };
 window.farrRemoteBlockHTML=remoteLiveHTML;window.farrRemoteExtraRows=remoteExtraRows;   /* 2.2.6: for the tests */
+/* ---------- 2.2.8.4: the Shelly block (own card under the EV meter block; the other blocks are not changed) ----------
+   Only true Shelly data from the measured sessions, plus what can be worked out from them.
+   Verdict per session: Full / Not completed / Not sure (the same rule the home phone already uses, read from the alerts copied from the Sheet).
+   Km: kWh charged since the last full charge, minus the charging loss, divided by kWh per km. Shown for two loss values, so two odometer values. */
+const SH_KEY='farrq.shelly', SH_LOSS_B=13.3, SH_EFF_DEFAULT=12.8;
+const SH_SEED={odo:1981,at:new Date(2026,10,2,13,24,0).getTime(),startPct:91,src:'start'};   /* odometer 1981 km at 11:44 on 2 Nov; the charge 11:47 to 13:24 started at 91% and was full */
+function shGet(){try{const o=JSON.parse(localStorage.getItem(SH_KEY)||'null');if(o&&+o.odo>0&&+o.at>0)return o;}catch(e){}return Object.assign({},SH_SEED);}
+function shSet(o){try{localStorage.setItem(SH_KEY,JSON.stringify(o));}catch(e){}}
+function shEff(){
+  let eff=null;
+  try{eff=summ(derive().filter(x=>x.ts>=Date.now()-30*864e5)).eff;}catch(e){}
+  if(eff==null||!isFinite(eff))return {v:SH_EFF_DEFAULT,app:null,why:'not enough trips in the app yet'};
+  if(eff>=10&&eff<=13)return {v:eff,app:eff,why:'the app figure of the last 30 days'};
+  return {v:SH_EFF_DEFAULT,app:eff,why:'the app figure is outside 10 to 13'};
+}
+function shVerdict(s,al,nextStart){
+  const en=+s.end_ms;
+  if(!(+s.kwh>=0.1))return {k:'short'};
+  if(Math.abs(en-SH_SEED.at)<=5*60000)return {k:'full',by:'you said so'};
+  const f=String(s.full||'');
+  if(f==='full')return {k:'full'};if(f==='not_full')return {k:'not_full'};if(f==='unsure')return {k:'unsure'};
+  const map={charge_full:'full',charge_not_full:'not_full',charge_full_unsure:'unsure'};
+  const hit=(al||[]).filter(a=>map[a.type]&&+a.ts>=en-120000&&+a.ts<=en+30*60000&&(nextStart==null||+a.ts<=nextStart+60000)).sort((a,b)=>a.ts-b.ts)[0];
+  return hit?{k:map[hit.type]}:{k:'none'};
+}
+function shCalc(){
+  const al=((sync('alerts')||{}).alerts||[]).filter(a=>!a.demo);
+  const all=(typeof MS!=='undefined'&&MS.length?MS:[]).filter(s=>+s.end_ms>0&&+s.kwh>0).map(s=>({st:+s.start_ms||+s.end_ms,en:+s.end_ms,kwh:+s.kwh,cost:(s.cost!=null&&s.cost!==''&&isFinite(+s.cost))?+s.cost:(+s.kwh)*rate(),peak:+s.peak_w||0,reason:s.end_reason||s.why||'',raw:s})).sort((a,b)=>a.st-b.st);
+  all.forEach((x,i)=>{const nx=all.slice(i+1).find(y=>y.kwh>=0.1);x.v=shVerdict(x.raw,al,nx?nx.st:null);});
+  const anchor=shGet(), eff=shEff(), loss=[+S.loss||0,SH_LOSS_B];
+  const kmOf=(kwh,l)=>kwh/(1+l/100)/(eff.v/100);
+  let odo=[anchor.odo,anchor.odo], pool=0, poolN=0, lastFull=null;
+  const fulls=[];
+  all.filter(x=>x.en>anchor.at+60000&&x.v.k!=='short').forEach(x=>{
+    pool+=x.kwh;poolN++;
+    if(x.v.k==='full'){
+      const km=loss.map(l=>kmOf(pool,l));
+      odo=[odo[0]+km[0],odo[1]+km[1]];
+      const row={st:x.st,en:x.en,kwh:x.kwh,pool,poolN,km,odo:odo.slice()};fulls.push(row);lastFull=row;pool=0;poolN=0;
+    }
+  });
+  const seedSess=all.filter(x=>Math.abs(x.en-SH_SEED.at)<=5*60000)[0]||null;
+  return {all,anchor,eff,loss,odo,pool,poolN,minKm:loss.map(l=>kmOf(pool,l)),fulls,lastFull,seedSess,kmOf};
+}
+const shDT=ts=>new Date(ts).toLocaleDateString('en-ZA',{day:'2-digit',month:'short'})+' '+hmClock(ts);
+const shRange=(a,b)=>shDT(a)+' to '+(new Date(a).toDateString()===new Date(b).toDateString()?hmClock(b):shDT(b));
+function shTag(v){
+  const t={full:['Full (100%)','var(--green,#22c55e)'],not_full:['Not completed','var(--gold)'],unsure:['Not sure','var(--muted)'],none:['Not sure','var(--muted)'],short:['Too short, ignored','var(--muted)']}[v.k]||['Not sure','var(--muted)'];
+  return `<span class="tag" style="color:${t[1]};border-color:${t[1]}">${t[0]}</span>`+(v.by?`<span class="small">${esc(v.by)}</span>`:'');
+}
+function shHead(t,sub){return `<div class="label" style="margin:16px 0 4px;padding-top:10px;border-top:2px solid var(--line,#8884)">${esc(t)}</div>`+(sub?`<div class="small" style="margin:0 0 4px">${esc(sub)}</div>`:'');}
+function shellyHTML(){
+  const c=shCalc(), a=c.anchor, k0=n2(c.loss[0],0), k1=n2(c.loss[1],1);
+  let h=`<div class="card"><div class="hdr-row"><div class="label">Shelly meter · true data</div><div class="small">${c.all.length?esc(ago(c.all[c.all.length-1].en)):''}</div></div>`+
+    `<div class="small" style="margin:4px 0 6px">Everything here comes from the Shelly's measured charges, copied from the Sheet. The other blocks are not changed.</div>`;
+  /* 1 start point */
+  h+=shHead('1 · Where we start');
+  h+=R('Start odometer',n2(a.odo,0)+' km');
+  h+=R('Taken at',esc(shDT(a.at)));
+  h+=R('How',a.src==='typed'?'You typed it':'Your odometer at 11:44, then a full charge');
+  if(a.src!=='typed'&&c.seedSess){
+    h+=R('Start charge',esc(shRange(c.seedSess.st,c.seedSess.en)));
+    h+=R('kWh charged',n2(c.seedSess.kwh,2)+' kWh · '+hmRand(c.seedSess.cost));
+    h+=R('Battery before and after','91% to 100%');
+  }
+  /* 2 odometer estimate */
+  h+=shHead('2 · Odometer estimate','Updated at each full charge. Two values, one for each charging loss.');
+  h+=R('Efficiency used',n2(c.eff.v,1)+' kWh per 100 km');
+  h+=`<div class="small" style="margin:0 0 4px">Why: ${esc(c.eff.why)}.${c.eff.app!=null?' App figure now: '+n2(c.eff.app,1)+'.':''}</div>`;
+  h+=R('Loss '+k0+'% (app setting)',n2(c.odo[0],0)+' km');
+  h+=R('Loss '+k1+'% (learned in the Sheet)',n2(c.odo[1],0)+' km');
+  h+=`<div class="small" style="margin:0 0 4px">${c.lastFull?'As at the full charge ending '+esc(shDT(c.lastFull.en))+'.':'No new full charge yet. These are the start values.'}</div>`;
+  /* 3 since last full */
+  h+=shHead('3 · Since the last full charge','The car has been driven at least this far. Not-full charges only add to the kWh.');
+  h+=R('Charges since',String(c.poolN));
+  h+=R('kWh charged since',n2(c.pool,2)+' kWh · '+hmRand(c.pool*rate()));
+  h+=R('Driven at least, loss '+k0+'%',n2(c.minKm[0],0)+' km');
+  h+=R('Driven at least, loss '+k1+'%',n2(c.minKm[1],0)+' km');
+  /* 4 full charges */
+  h+=shHead('4 · Full charges after the start','Newest first. The km come from the kWh charged since the full charge before.');
+  const f=c.fulls.slice().reverse();
+  h+=f.length?f.slice(0,8).map(x=>`<div class="row"><div>${esc(shRange(x.st,x.en))}<div class="small">${n2(x.pool,2)} kWh in ${x.poolN} charge${x.poolN>1?'s':''} · +${n2(x.km[0],0)} km (${k0}%) · +${n2(x.km[1],0)} km (${k1}%)</div></div><div style="text-align:right"><b>${n2(x.odo[0],0)} km</b><div class="small">${n2(x.odo[1],0)} km</div></div></div>`).join(''):'<div class="small">None yet.</div>';
+  /* 5 last sessions */
+  h+=shHead('5 · Latest Shelly charges','Start, end, kWh, cost and what happened at the end.');
+  const L=c.all.slice().reverse().slice(0,12);
+  h+=L.length?L.map(x=>`<div class="row"><div>${esc(shRange(x.st,x.en))}<div class="small">${hmDur(Math.round((x.en-x.st)/60000))} · peak ${n2(x.peak,0)} W${x.reason?' · '+esc(x.reason):''}</div><div style="margin-top:3px">${shTag(x.v)}</div></div><div style="text-align:right"><b>${n2(x.kwh,2)} kWh</b><div class="small">${hmRand(x.cost)}</div></div></div>`).join(''):'<div class="small">No Shelly charges on this phone yet.</div>';
+  /* 6 totals */
+  const now=new Date(), from=new Date(now.getFullYear(),now.getMonth(),1).getTime(), wk=Date.now()-7*864e5;
+  const tot=(cut)=>{const r={n:0,kwh:0,cost:0,full:0,nf:0,un:0};c.all.filter(x=>x.en>=cut&&x.v.k!=='short').forEach(x=>{r.n++;r.kwh+=x.kwh;r.cost+=x.cost;if(x.v.k==='full')r.full++;else if(x.v.k==='not_full')r.nf++;else r.un++;});return r;};
+  const t7=tot(wk), tm=tot(from);
+  h+=shHead('6 · Totals','Charges under 0.1 kWh are left out.');
+  [['Last 7 days',t7],['This month',tm]].forEach(([n,t])=>{
+    h+=R(n,n2(t.kwh,2)+' kWh · '+hmRand(t.cost));
+    h+=`<div class="small" style="margin:0 0 4px">${t.n} charges: ${t.full} full · ${t.nf} not completed · ${t.un} not sure</div>`;
+  });
+  /* 7 real odometer */
+  h+=shHead('7 · Your real odometer','Type it when you know it. Best right after a full charge, with no driving since.');
+  h+=`<div style="display:flex;gap:8px;align-items:center;margin:6px 0"><input id="shOdo" type="number" inputmode="decimal" placeholder="Odometer in km" style="flex:1 1 auto;width:auto;min-width:0"><button class="btn" style="flex:0 0 auto;width:auto;padding:10px 16px;margin:0" onclick="farrShellySet()">Use this</button></div>`;
+  h+=`<div class="small">Now using: ${n2(a.odo,0)} km, ${a.src==='typed'?'typed by you at ':'start value, '}${esc(shDT(a.at))}.</div>`;
+  if(a.src==='typed')h+=`<div style="margin-top:6px"><button class="btn ghost" onclick="farrShellyReset()">Go back to the 1981 km start</button></div>`;
+  /* 8 rules */
+  h+=shHead('How to read this');
+  h+=`<div class="small">Full: the Shelly went to 0 W while both relays stayed on.<br>Not completed: a relay went off while the car was still charging.<br>Not sure: the app could not tell. It does not count as full.<br>Km = kWh charged, minus the loss, divided by kWh per km.<br>The odometer estimate only moves at a full charge.</div>`;
+  return h+`</div>`;
+}
+let shLast='';
+function paintShelly(force){
+  const el=document.getElementById('shellyCard');if(!el)return;
+  const inp=document.getElementById('shOdo');
+  if(!force&&inp&&document.activeElement===inp)return;
+  const keep=inp?inp.value:'';
+  const h=shellyHTML();
+  if(h!==shLast||force){shLast=h;el.innerHTML=h;const n=document.getElementById('shOdo');if(n&&keep)n.value=keep;}
+}
+window.farrShellySet=function(){
+  const i=document.getElementById('shOdo');const v=i?parseFloat(i.value):NaN;
+  if(isNaN(v)||v<=0)return say('Type your odometer in km first.');
+  shSet({odo:v,at:Date.now(),startPct:null,src:'typed'});
+  if(i)i.value='';paintShelly(true);say('Odometer saved in the Shelly block');
+};
+window.farrShellyReset=function(){try{localStorage.removeItem(SH_KEY);}catch(e){}paintShelly(true);say('Back to the 1981 km start');};
+window.farrShelly={calc:shCalc,html:shellyHTML,paint:paintShelly};
 function paintHomeCard(){
+  try{paintShelly();}catch(e){}
   const el=$('meterCard'); if(!el)return;
   const L=LIVE, st=statusText(L), v=L&&L.live;
   const unread=(L&&L.unread)||0;
