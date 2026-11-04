@@ -5,7 +5,7 @@
 (function(){
 'use strict';
 const N=window.FarrNative||null;
-window.FARR_VER='Ver_FarrQ_2.2.8.4';
+window.FARR_VER='Ver_FarrQ_2.2.8.5';
 window.FARR_APP_URL='https://github.com/esp32alegriff-bit/farr-q-charge-apk/releases/latest';
 
 /* ---------- bridge ---------- */
@@ -140,7 +140,7 @@ window.farrBack=function(){
   if(dlgClose){dlgClose(false);return true;}
   const on=document.querySelector('.screen.on'); const id=on?on.id.slice(2):'home';
   if(id==='home')return false;
-  if(['meter','relay','alerts','conn','info','learn'].includes(id))go('set');
+  if(['meter','relay','relayinfo','alerts','conn','info','learn'].includes(id))go('set');
   else if(id==='set')go('graph');
   else go('home');
   return true;
@@ -1190,6 +1190,111 @@ window.farrPaintAccGraph=function(){try{ensure();V=week();draw();}catch(e){}};
 window.farrAccTest={get:()=>V,pts:pts,draw:draw,trend:trend};
 })();
 
+/* ---------- 2.2.8.5: Relay Info page (Settings). Reads only the relay /api/v1/status. Additions only. ---------- */
+let RI=null, RIBusy=false;          // RI = {j: status json, from: 'relay'|'sheet', seen: ms, phone}
+const RI_SHOWN=['relay1_on','relay2_on','wifi_rssi','wifi_channel','uptime_s','free_heap','min_free_heap','wifi_connects','wifi_disconnects','last_disconnect_reason','espnow_rssi_waveshare','espnow_age_ms_waveshare','espnow_rx_waveshare','espnow_rssi_crowpanel','espnow_age_ms_crowpanel','espnow_rx_crowpanel','latched_relay1','latched_relay2','fw_diag','led_eskom_green','led_eskom_red','led_ev_green','led_ev_red','led_fixes','reset_reason','tx_power_set_qdbm','tx_power_now_qdbm','tx_power_now_dbm','since_boot','boot_no','restart_reason_text','time_valid','time_local','log_flash_ok','ignored_frames','relay_log','monitor_tx_ok','monitor_tx_fail','reachable','address','checkedAt','message','ok'];
+const RI_WHY={0:'unknown',1:'owner OFF',2:'restart',3:'power loss',4:'update',5:'fault'};
+function riYes(v){return v===undefined||v===null?'--':(v===true||v===1||v==='1')?'yes':'no';}
+function riAge(ms){return ms===undefined?'--':(+ms<0?'not heard':'heard '+Math.round(+ms/1000)+' s ago');}
+function riRows(j){
+  const L=[];const add=(a,b)=>{if(b!==undefined&&b!==null&&b!=='')L.push([a,String(b)]);};
+  add('Firmware',j.fw_diag);
+  if(j.uptime_s!==undefined)add('Uptime',fmtUp(j.uptime_s)+(j.since_boot?' ('+j.since_boot+')':''));
+  add('Boot number',j.boot_no);
+  if(j.restart_reason_text)add('Restart reason',j.restart_reason_text);
+  else if(j.reset_reason!==undefined)add('Restart reason',RST_WORDS[+j.reset_reason]||('code '+j.reset_reason));
+  if(j.reset_reason!==undefined&&j.restart_reason_text)add('Chip reset code',(RST_WORDS[+j.reset_reason]||'code')+' ('+j.reset_reason+')');
+  if(j.wifi_rssi!==undefined)add('Wi-Fi signal',j.wifi_rssi+' dBm ('+rssiWord(j.wifi_rssi)+')');
+  add('Wi-Fi channel',j.wifi_channel);
+  add('Wi-Fi connects',j.wifi_connects);add('Wi-Fi drops',j.wifi_disconnects);add('Last drop reason code',j.last_disconnect_reason);
+  if(j.tx_power_set_qdbm!==undefined)add('TX power set',(+j.tx_power_set_qdbm/4)+' dBm');
+  if(j.tx_power_now_dbm!==undefined)add('TX power now',j.tx_power_now_dbm+' dBm');
+  else if(j.tx_power_now_qdbm!==undefined)add('TX power now',(+j.tx_power_now_qdbm/4)+' dBm');
+  if(j.espnow_age_ms_crowpanel!==undefined)add('CrowPanel (ESP-NOW)',riAge(j.espnow_age_ms_crowpanel)+' · '+j.espnow_rssi_crowpanel+' dBm'+(j.espnow_rx_crowpanel!==undefined?' · '+j.espnow_rx_crowpanel+' frames':''));
+  if(j.espnow_age_ms_waveshare!==undefined)add('Waveshare (ESP-NOW)',riAge(j.espnow_age_ms_waveshare)+' · '+j.espnow_rssi_waveshare+' dBm'+(j.espnow_rx_waveshare!==undefined?' · '+j.espnow_rx_waveshare+' frames':''));
+  if(j.relay1_on!==undefined)add('Relay 1 (Eskom)',j.relay1_on?'ON':'OFF');
+  if(j.relay2_on!==undefined)add('Relay 2 (EV)',j.relay2_on?'ON':'OFF');
+  if(j.latched_relay1!==undefined)add('Relay 1 latched',riYes(j.latched_relay1));
+  if(j.latched_relay2!==undefined)add('Relay 2 latched',riYes(j.latched_relay2));
+  if(j.led_eskom_green!==undefined)add('LEDs (Eskom green/red · EV green/red)',j.led_eskom_green+'/'+j.led_eskom_red+' · '+j.led_ev_green+'/'+j.led_ev_red);
+  add('LED corrections',j.led_fixes);add('Ignored frames',j.ignored_frames);
+  if(j.free_heap!==undefined)add('Free memory',Math.round(j.free_heap/1024)+' kB');
+  if(j.min_free_heap!==undefined)add('Lowest memory',Math.round(j.min_free_heap/1024)+' kB');
+  if(j.time_valid!==undefined)add('Real time valid',riYes(j.time_valid));
+  add('Relay clock',j.time_local);
+  if(j.log_flash_ok!==undefined)add('Log in flash OK',riYes(j.log_flash_ok));
+  if(j.monitor_tx_ok!==undefined)add('Home Monitor sends ok · failed',j.monitor_tx_ok+' · '+j.monitor_tx_fail);
+  Object.keys(j).forEach(k=>{if(RI_SHOWN.includes(k))return;const v=j[k];if(v!==null&&typeof v==='object')return;add(k.replace(/_/g,' '),v);});   // any new field a later firmware adds
+  return L;
+}
+function riLogRows(j){
+  const a=Array.isArray(j.relay_log)?j.relay_log.slice():[];
+  a.sort((x,y)=>((+y.boot||0)-(+x.boot||0))||((+y.since_boot_s||0)-(+x.since_boot_s||0)));   // newest first
+  return a.map(e=>{
+    const when=e.time&&e.time!=='--'?e.time:('boot '+(e.boot===undefined?'?':e.boot)+', '+(e.since_boot||(e.since_boot_s!==undefined?fmtUp(e.since_boot_s):'')));
+    const why=(typeof e.why==='string')?e.why:(RI_WHY[+e.why]||('code '+e.why));
+    const rl=e.relay===undefined?'':(e.relay==0||e.relay==='both'?'':'relay '+e.relay);
+    return [when,[rl,why,e.src?('from '+e.src):'',e.extra?('('+e.extra+')'):''].filter(Boolean).join(' · ')];
+  });
+}
+function riText(){
+  if(!RI)return 'No relay data yet.';
+  const j=RI.j,t=['FARR Q relay info · '+new Date().toLocaleString('en-ZA'),'Source: '+(RI.from==='sheet'?'Google Sheet copy, seen '+tstamp(RI.seen)+(RI.phone?' by '+RI.phone:''):'relay board, just now')];
+  riRows(j).forEach(r=>t.push(r[0]+': '+r[1]));
+  const lg=riLogRows(j);t.push('','OFF / restart log, newest first ('+lg.length+'):');
+  lg.forEach(r=>t.push(r[0]+' · '+r[1]));
+  return t.join('\n');
+}
+function riPaint(msg){
+  const el=$('relayInfoBody');if(!el)return;
+  let h='';
+  if(msg)h+='<div class="card small">'+esc(msg)+'</div>';
+  if(RI){
+    const j=RI.j;
+    h+='<div class="small" style="margin:0 0 8px">'+(RI.from==='sheet'?'Copy from the Google Sheet, seen '+esc(ago(RI.seen))+(RI.phone?' by '+esc(RI.phone):'')+'. Not live.':'Live from the relay board, '+esc(ago(RI.seen))+'.')+'</div>';
+    h+=section('Relay board',riRows(j).map(r=>R(esc(r[0]),esc(r[1]))).join('')||'<div class="small">Nothing reported</div>');
+    const lg=riLogRows(j);
+    h+=section('OFF and restart log, newest first',lg.length?lg.map(r=>R(esc(r[0]),esc(r[1]))).join(''):'<div class="small">No entries yet. (Firmware 2.4 logs OFF and restart events; 2.5 will keep 50 and add ON events.)</div>');
+  }else h+='<div class="card small">No relay data yet. Tap Refresh when this phone is on the home Wi-Fi.</div>';
+  const sh=RI_SHEET;
+  h+=section('Last seen from the Sheet',sh?R('Seen',esc(tstamp(sh.seen))+' ('+esc(ago(sh.seen))+')')+(sh.phone?R('By phone',esc(sh.phone)):'')+(sh.status&&sh.status.fw_diag?R('Firmware',esc(sh.status.fw_diag)):'')+(sh.status&&sh.status.boot_no!==undefined?R('Boot number',esc(sh.status.boot_no)):''):'<div class="small">Empty. Fills when a phone at home taps Refresh here and the Sheet script 2.2.8.5 is deployed. Firmware 2.5 will push it by itself.</div>');
+  el.innerHTML=h;
+}
+let RI_SHEET=null;
+try{RI_SHEET=JSON.parse(localStorage.getItem('farrq.relayInfoSheet')||'null');}catch(e){}
+async function relayInfoLoad(manual){
+  if(RIBusy)return;RIBusy=true;riPaint(RI?'':'Loading…');
+  let live=null,err='';
+  try{const j=await call('relayDetails');if(j&&j.reachable!==false&&!j.error)live=j;else err=(j&&(j.message||j.error))||'Relay not reachable';}catch(e){err=String(e&&e.message||e);}
+  if(live){
+    RI={j:live,from:'relay',seen:live.checkedAt||Date.now()};
+    riPaint();
+    if(manual&&rmOn()){try{await call('remotePush',{kind:'relay',sent:Date.now(),relay:live});say('Copied to the Sheet');}catch(e){}}
+  }else{
+    let note='Relay not reachable from here ('+err+'). It answers only on the home Wi-Fi.';
+    if(rmOn()){
+      try{
+        const r=await call('remotePush',{kind:'pull',sent:Date.now(),wantRelay:true});
+        if(r&&r.relay&&r.relay.status&&Object.keys(r.relay.status).length){
+          RI_SHEET={seen:+r.relay.seen||0,phone:r.relay.phone||'',status:r.relay.status};
+          try{localStorage.setItem('farrq.relayInfoSheet',JSON.stringify(RI_SHEET));}catch(e){}
+          RI={j:r.relay.status,from:'sheet',seen:RI_SHEET.seen,phone:RI_SHEET.phone};
+          note='Relay not reachable from here. Showing the last copy from the Sheet.';
+        }else if(!RI)note+=' The Sheet has no relay copy yet.';
+      }catch(e){if(!RI)note+=' Sheet: '+String(e&&e.message||e);}
+    }
+    riPaint(note);
+  }
+  RIBusy=false;
+}
+window.farrRelayInfoRefresh=function(){relayInfoLoad(true);};
+window.farrRelayInfoCopy=function(){
+  const t=riText();
+  try{if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(t).then(()=>say('Copied'),()=>{if(N)N.shareText(t,'FARR Q relay info');});return;}}catch(e){}
+  if(N)N.shareText(t,'FARR Q relay info');
+};
+window.farrRelayInfoTest={rows:riRows,log:riLogRows,text:riText,set:j=>{RI={j:j,from:'relay',seen:Date.now()};riPaint();}};
+
 /* ---------- screen changes (called from go()) ---------- */
 window.farrOnScreen=function(id){
   screen=id;
@@ -1201,6 +1306,7 @@ window.farrOnScreen=function(id){
   if(id==='alerts')paintAlerts();
   if(id==='conn'){paintConn();paintRemote();tick();}
   if(id==='info'){renderInfo();tick();}
+  if(id==='relayinfo'){relayInfoLoad(false);tick();}
   if(id==='set'){const a=sync('alerts');const u=a&&a.unread;const el=$('alertsRowSub');if(el)el.textContent=u?u+' new alert'+(u>1?'s':''):'Every alert, notifications and background checks';}
 };
 })();

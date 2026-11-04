@@ -38,6 +38,6 @@ post({token:'pw1',kind:'app',phone:'Antonio',readings:[],summary:{}});
 ok(sheets['Summary'].rows[0][3]==='EV METER (last check)'&&sheets['Summary'].rows[3][4]===2750,'EV METER block survives an app send');
 r=post({token:'pw1',kind:'app',phone:'Antonio',wantAlerts:true,since:0,readings:[]});
 ok(r.alerts&&r.alerts.length===2,'an app send also returns the alerts');
-ok(post({token:'pw1',kind:'app',phone:'X',readings:[]}).script==='2.2.5','script version is 2.2.5');
+ok(post({token:'pw1',kind:'app',phone:'X',readings:[]}).script==='2.2.8.5','script version is 2.2.8.5');
 ok(src.includes('script 2.2.5'),'script header says 2.2.5');
 console.log(fail?'FAILED '+fail:'ALL PASS');process.exit(fail?1:0);

@@ -31,7 +31,7 @@
 */
 
 var PASSWORD = 'CHANGE-ME';
-var SCRIPT_VERSION = '2.2.5';   // shown in the app and in the Summary and Phones tabs
+var SCRIPT_VERSION = '2.2.8.5';   // shown in the app and in the Summary and Phones tabs
 
 var TABS = {
   charges:  {name: 'Charge log',     head: ['When', 'Where', 'Battery %', 'Stored kWh', 'Wall kWh', 'Cost R', 'Measured', 'Auto (no charge log)', 'Phone', 'Updated'], key: [0, 1]},
@@ -46,6 +46,7 @@ var TABS = {
   est:      {name: 'Estimates',      head: ['Date', 'Sessions stored', 'Sessions used', 'Confidence', 'Ratio', 'Loss %', 'Ratio from', 'Taper charges', '50%: min', '50%: kWh', '50%: R', '60%: min', '60%: kWh', '60%: R', '70%: min', '70%: kWh', '70%: R', '80%: min', '80%: kWh', '80%: R', '90%: min', '90%: kWh', '90%: R', '95%: min', '95%: kWh', '95%: R'], key: [0]},
   daily:    {name: 'Daily totals',   head: ['Date', 'Trips', 'Km', 'kWh used', 'Charges', 'Wall kWh', 'Cost R', 'Shelly kWh', 'Petrol cost R', 'Saving R', 'Updated'], key: [0]},
   alerts:   {name: 'Alerts',         head: ['When', 'Type', 'Level', 'What happened'], key: [0, 1, 3]},
+  relay:    {name: 'Relay info',     head: ['Seen', 'Firmware', 'Boot no', 'Uptime s', 'Restart reason', 'Wi-Fi dBm', 'Channel', 'Wi-Fi drops', 'Waveshare dBm', 'CrowPanel dBm', 'Relay 1', 'Relay 2', 'Free memory B', 'Lowest memory B', 'Phone', 'Updated', 'Full status (JSON)'], key: [0]},
   settings: {name: 'Settings log',   head: ['Changed', 'Home R/kWh', 'Station R/kWh', 'Solar R/kWh', 'Loss %', 'Pack kWh', 'Car claim', 'Petrol R/L', 'Compare L/100km', 'Car price R'], key: [0]}
 };
 
@@ -87,11 +88,13 @@ function doPost(e) {
       }));
     }
     if (p.kind === 'meter' && p.live) live_(ss, p.live, now);
+    if (p.kind === 'relay' && p.relay) { try { n += relay_(ss, p.relay, phone, now); } catch (x6) { /* relay info never stops the sync */ } }
     var extra = {script: SCRIPT_VERSION};
     if (p.kind === 'app' && p.wantReadings) extra.readings = readings_(ss);
     var asks = (p.kind === 'app' || p.kind === 'pull');
     if (asks && p.wantMeter) { try { extra.meter = meter_(ss); } catch (x4) { /* the meter copy never stops the sync */ } }
     if (asks && p.wantAlerts) { try { extra.alerts = alerts_(ss, +p.since || 0); extra.now = now.getTime(); } catch (x5) { /* alerts never stop the sync */ } }
+    if (asks && p.wantRelay) { try { var rl = relayLast_(ss); if (rl) extra.relay = rl; } catch (x7) { /* never stops the sync */ } }
     return out_(true, 'Sheet updated (' + n + ' rows checked)', extra);
   } catch (err) {
     return out_(false, 'Script error: ' + err);
@@ -138,6 +141,28 @@ function extra_(ss, x, now) {
 }
 
 function doGet() { return out_(true, 'FARR Q Charge sheet is running. Use the app to send data.'); }
+
+/* 2.2.8.5: relay board details copied by the phone at home (one row each time it looks) */
+function relay_(ss, j, phone, now) {
+  var seen = +j.checkedAt || now.getTime();
+  var row = [d_(seen), String(j.fw_diag || ''), j.boot_no === undefined ? '' : j.boot_no, j.uptime_s === undefined ? '' : j.uptime_s,
+    String(j.restart_reason_text || ''), j.wifi_rssi === undefined ? '' : j.wifi_rssi, j.wifi_channel === undefined ? '' : j.wifi_channel,
+    j.wifi_disconnects === undefined ? '' : j.wifi_disconnects, j.espnow_rssi_waveshare === undefined ? '' : j.espnow_rssi_waveshare,
+    j.espnow_rssi_crowpanel === undefined ? '' : j.espnow_rssi_crowpanel, j.relay1_on ? 'ON' : 'OFF', j.relay2_on ? 'ON' : 'OFF',
+    j.free_heap === undefined ? '' : j.free_heap, j.min_free_heap === undefined ? '' : j.min_free_heap, phone, now,
+    JSON.stringify(j).slice(0, 40000)];
+  var k = upsert_(ss, TABS.relay, [row]);
+  var sh = ss.getSheetByName(TABS.relay.name);
+  if (sh && sh.getLastRow() > 501) sh.deleteRows(502, sh.getLastRow() - 501);   // keep the newest 500 rows
+  return k;
+}
+function relayLast_(ss) {
+  var sh = ss.getSheetByName(TABS.relay.name);
+  if (!sh || sh.getLastRow() < 2) return null;
+  var r = sh.getRange(2, 1, 1, TABS.relay.head.length).getValues()[0];
+  var j = {}; try { j = JSON.parse(String(r[16])); } catch (x) {}
+  return {seen: r[0] instanceof Date ? r[0].getTime() : 0, phone: String(r[14]), status: j};
+}
 
 function out_(ok, msg, extra) {
   var o = {ok: ok, message: msg};

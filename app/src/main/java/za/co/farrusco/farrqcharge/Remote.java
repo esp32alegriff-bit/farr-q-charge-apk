@@ -56,6 +56,7 @@ final class Remote {
             if (r.has("script")) out.put("script", r.optString("script"));
             if (r.has("readings")) out.put("readings", r.get("readings"));   // the other phone's entries, merged by the app screens
             if (r.has("meter")) out.put("meter", r.get("meter"));            // 2.2.4: finished Shelly charges and the last meter reading, copied by the phone at home
+            if (r.has("relay")) out.put("relay", r.get("relay"));            // 2.2.8.5: relay board details copied by the phone at home
             try { applyAlerts(c, r); } catch (Exception ignored) { /* alerts never stop a sync */ }
         } catch (JSONException e) {
             throw new IOException("Could not prepare the data to send");
