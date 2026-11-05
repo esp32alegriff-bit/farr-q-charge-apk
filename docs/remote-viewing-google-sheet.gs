@@ -1,5 +1,5 @@
 /*
- FARR Q Charge - "View from anywhere"  (script 2.2.5: live reading and alerts for a phone that is away from home, for Ver_FarrQ_2.2.5)
+ FARR Q Charge - "View from anywhere"  (script 2.2.8.5: live reading, alerts and Relay info for a phone that is away from home, for Ver_FarrQ_2.2.8.5)
  A copy of the charge log in YOUR Google Sheet. The phones send to it; you open the Sheet from any country.
 
  ONE-TIME SETUP (about 5 minutes)
