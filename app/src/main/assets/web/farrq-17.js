@@ -5,7 +5,7 @@
 (function(){
 'use strict';
 const N=window.FarrNative||null;
-window.FARR_VER='Ver_FarrQ_2.2.8.5';
+window.FARR_VER='Ver_FarrQ_2.2.8.5_A';
 window.FARR_APP_URL='https://github.com/esp32alegriff-bit/farr-q-charge-apk/releases/latest';
 
 /* ---------- bridge ---------- */
@@ -106,7 +106,17 @@ loadMS();
 window.measuredBetween=function(a,b){
   let k=0,n=0;
   for(const x of MS){if(x.end_ms>a&&x.end_ms<=b){k+=+x.kwh||0;n++;}}
-  return n?{kwh:k,count:n}:null;
+  if(n)return {kwh:k,count:n};
+  /* 2.2.8.5_A: the charge log was typed while a Shelly charge was still running. That charge is measured, so it is never estimated from battery %.
+     If the next log entry is a Home charge log after the charge ended, that entry already carries the kWh, so this one carries 0. */
+  try{
+    const run=MS.find(x=>!x.demo&&(+x.kwh||0)>=0.1&&(+x.start_ms||+x.end_ms)<=b&&+x.end_ms>b);
+    if(run){
+      const nx=(typeof E!=='undefined'&&E?E:[]).filter(e=>e&&!e.auto&&e.ts>b).sort((p,q)=>p.ts-q.ts)[0];
+      return nx&&nx.kind==='charge'&&nx.where!=='Station'&&nx.ts>=+run.end_ms?{kwh:0,count:0,during:true}:{kwh:+run.kwh,count:1,during:true};
+    }
+  }catch(e){}
+  return null;
 };
 
 /* ---------- backup rows (same 8 columns as 1.6, so 1.6 simply skips them) ---------- */
@@ -253,7 +263,7 @@ function homeMonthStats(now,r){
   return a;
 }
 const hmClock=ts=>new Date(ts).toLocaleTimeString('en-ZA',{hour:'2-digit',minute:'2-digit'});
-const hmDur=min=>min>=60?Math.floor(min/60)+' h '+(min%60)+' min':Math.max(0,Math.round(min))+' min';
+const hmDur=m0=>{const min=Math.max(0,Math.round(+m0||0));return min>=60?Math.floor(min/60)+' h '+(min%60)+' min':min+' min';};
 const hmRand=v=>'R'+n2(v,2);
 function hmHead(t,sub){return `<div class="label" style="margin:16px 0 4px;padding-top:10px;border-top:2px solid var(--line,#8884)">${esc(t)}</div>`+(sub?`<div class="small" style="margin:0 0 4px">${esc(sub)}</div>`:'');}
 /* 2.2.8.3: the five groups under the EV meter block. Everything is worked out on this phone from the block, the log and the meter sessions already copied. Nothing is sent. */
@@ -268,8 +278,13 @@ function homeSummaryGroups(r){
   /* A: today */
   h+=hmHead('A · Today','Worked out as of the Last copied time.');
   if(r.charging&&run>0&&watts>=500){
-    const mins=run/(watts/1000)*60;
-    h+=R('Charging for (about)',hmDur(mins))+R('Started at (about)',hmClock(r.at-mins*60000));
+    let stA=0;
+    try{
+      const lastEnd=(typeof MS!=='undefined'&&MS.length?MS:[]).reduce((t,x)=>+x.end_ms<=r.at+60000&&+x.end_ms>t?+x.end_ms:t,0);
+      ((sync('alerts')||{}).alerts||[]).forEach(a=>{if(a.type==='session_start'&&!a.demo&&+a.ts<=r.at+60000&&+a.ts>=lastEnd&&+a.ts>r.at-24*3600000&&+a.ts>stA)stA=+a.ts;});
+    }catch(e){}
+    if(stA>0){h+=R('Charging for',hmDur((r.at-stA)/60000))+R('Started at',hmClock(stA));}
+    else{const mins=run/(watts/1000)*60;h+=R('Charging for (about)',hmDur(mins))+R('Started at (about)',hmClock(r.at-mins*60000));}
   }else{h+=R('Charging for (about)',NA)+R('Started at (about)',NA);}
   h+=R('This charge so far',r.charging&&run>0?n2(run,2)+' kWh · '+hmRand(run*rt):NA);
   h+=R('Full at (about)',est&&est.min!=null?(est.p>=100?'Full':hmClock(r.at+est.min*60000)):NA);
@@ -295,8 +310,10 @@ function homeSummaryGroups(r){
   const rowsM=derive().filter(x=>x.ts>=m.from), sm=summ(rowsM);
   h+=hmHead('D · Car use this month');
   h+=R('Km this month',sm.km>0?n2(sm.km,0)+' km':NA);
-  h+=R('kWh per 100 km',sm.eff!=null?n2(sm.eff,1):NA);
-  h+=R('Cost per km',sm.perKm!=null?hmRand(sm.perKm):NA);
+  h+=R('kWh per 100 km (battery, from trips)',sm.eff!=null?n2(sm.eff,1):NA);
+  let wl=null;try{wl=shEff();}catch(e){}
+  h+=R('kWh per 100 km (at the wall, Shelly)',wl?n2(wl.v,1)+(wl.n?'':' · start value'):NA);
+  h+=R('Cost per km (at the wall)',wl?hmRand(wl.v/100*rt):NA);
   h+=R('Km since last charge',(function(){try{const k=kmSinceCharge();return k?n2(k.km,0)+' km':NA;}catch(e){return NA;}})());
   /* E: settings and health */
   const odo=(typeof E!=='undefined'&&E.length?E:[]).filter(e=>e.odo>0).reduce((a,b)=>!a||b.ts>a.ts?b:a,null);
@@ -311,12 +328,16 @@ function homeSummaryGroups(r){
 function homeMonthRows(){return '';}   /* 2.2.8.3: replaced by the B group (kept so older tests find the name) */
 window.farrHomeMonth=homeMonthStats;window.farrHomeGroups=homeSummaryGroups;
 function kmSinceCharge(){
-  const L=(typeof E!=='undefined'&&E.length?E:[]);
+  const L=(typeof E!=='undefined'&&E.length?E:[]).filter(e=>e&&!e.auto);
   const ch=L.filter(e=>e.kind==='charge'&&e.odo>0).reduce((a,b)=>!a||b.ts>a.ts?b:a,null);
   const lt=L.filter(e=>e.odo>0).reduce((a,b)=>!a||b.ts>a.ts?b:a,null);
-  if(!ch||!lt)return null;
-  const km=lt.odo-ch.odo;
-  return km>=0?{km,since:ch.ts}:null;
+  if(!lt)return null;
+  const se=(typeof MS!=='undefined'&&MS.length?MS:[]).reduce((t,x)=>(+x.kwh||0)>=0.1&&+x.end_ms>t?+x.end_ms:t,0);
+  let at=ch;
+  if(se>(ch?ch.ts:0))at=L.filter(e=>e.odo>0&&e.ts<=se).reduce((a,b)=>!a||b.ts>a.ts?b:a,null);   // 2.2.8.5_A: the car stood still on that charge
+  if(!at)return null;
+  const km=lt.odo-at.odo;
+  return km>=0?{km,since:Math.max(at.ts,se>(ch?ch.ts:0)?se:0)}:null;
 }
 function kmSinceChargeRow(){
   try{const k=kmSinceCharge();return k?R('Km since last charge',n2(k.km,0)+' km'):'';}catch(e){return '';}
@@ -332,6 +353,10 @@ function remoteExtraRows(r){
          R('Logged',esc(tstamp(last.ts)))+
          (last.carKm!=null&&!isNaN(last.carKm)?R('Car said',n2(last.carKm,0)+' km'):'')+
          (last.odo>0?R('Odometer',n2(last.odo,0)+' km'):'')+kmSinceChargeRow(last);
+      try{
+        const fs=shVerdicts().filter(x=>x.kwh>=0.1&&x.en>last.ts&&x.en<=r.at+60000).pop();
+        if(fs&&fs.v.k==='full'&&!r.charging)h+=R('Battery after the last charge','100% · full at '+esc(hmClock(fs.en)));
+      }catch(e){}
     }
   }catch(e){}
   try{
@@ -382,101 +407,213 @@ const SH_KEY='farrq.shelly', SH_LOSS_B=13.3, SH_EFF_DEFAULT=12.8;
 const SH_SEED={odo:1981,at:new Date(2026,10,2,13,24,0).getTime(),startPct:91,src:'start'};   /* odometer 1981 km at 11:44 on 2 Nov; the charge 11:47 to 13:24 started at 91% and was full */
 function shGet(){try{const o=JSON.parse(localStorage.getItem(SH_KEY)||'null');if(o&&+o.odo>0&&+o.at>0)return o;}catch(e){}return Object.assign({},SH_SEED);}
 function shSet(o){try{localStorage.setItem(SH_KEY,JSON.stringify(o));}catch(e){}}
-function shEff(){
-  let eff=null;
-  try{eff=summ(derive().filter(x=>x.ts>=Date.now()-30*864e5)).eff;}catch(e){}
-  if(eff==null||!isFinite(eff))return {v:SH_EFF_DEFAULT,app:null,why:'not enough trips in the app yet'};
-  if(eff>=10&&eff<=13)return {v:eff,app:eff,why:'the app figure of the last 30 days'};
-  return {v:SH_EFF_DEFAULT,app:eff,why:'the app figure is outside 10 to 13'};
+/* ---------- 2.2.8.5_A: the verdict is worked out AFTERWARDS from the saved records, not live ----------
+   The old way needed two relay reads by the phone at home inside 20 minutes. When a read failed the charge stayed "Not sure".
+   Now every finished Shelly charge is judged from what is already on this phone: the Shelly sessions, the log entries,
+   the alerts and the relay's own copy in the Sheet. Nothing is sent, nothing is asked from the relay, the Sheet script is not changed.
+   Order: 1 charging went on again within 10 min = a pause. 2 a battery % typed after it, car not moved. 3 the relay's own log shows an OFF at the stop.
+   4 the phone at home saw it full. 5 relays still ON after the stop. 6 the kWh fit (or do not reach) 100% from the % typed before it.
+   7 the car took more charge within an hour. 8 the Shelly alone: the car stopped by itself (the owner's rule: the Shelly is king). */
+const SH_WALL_DEFAULT=16.5, VD_KEY='farrq.verdicts';
+function vdStore(){try{return JSON.parse(localStorage.getItem(VD_KEY)||'{}')||{};}catch(e){return {};}}
+function vdKeep(en,v){
+  try{const o=vdStore(),k=String(en);if(o[k]&&o[k].k===v.k&&o[k].by===v.by)return v;o[k]={k:v.k,by:v.by||''};
+    const ks=Object.keys(o).sort((a,b)=>+a-+b);while(ks.length>400)delete o[ks.shift()];localStorage.setItem(VD_KEY,JSON.stringify(o));}catch(e){}
+  return v;
 }
-function shVerdict(s,al,nextStart){
-  const en=+s.end_ms;
-  if(!(+s.kwh>=0.1))return {k:'short'};
+function shEntries(){return (typeof E!=='undefined'&&E&&E.length?E:[]).filter(e=>e&&e.ts>0&&!e.auto).slice().sort((a,b)=>a.ts-b.ts);}
+function shSessions(){
+  return (typeof MS!=='undefined'&&MS.length?MS:[]).filter(s=>+s.end_ms>0&&+s.kwh>0).map(s=>({st:+s.start_ms||+s.end_ms,en:+s.end_ms,kwh:+s.kwh,cost:(s.cost!=null&&s.cost!==''&&isFinite(+s.cost))?+s.cost:(+s.kwh)*rate(),peak:+s.peak_w||0,reason:s.end_reason||s.why||'',raw:s})).sort((a,b)=>a.st-b.st);
+}
+/* The relay's own record: its ON/OFF/restart log and how long both relays have been ON. From the relay (at home) or its copy in the Sheet. */
+function shRelayEv(){
+  try{
+    let src=null;
+    try{if(RI&&RI.j&&+RI.seen>0)src={seen:+RI.seen,j:RI.j};}catch(e){}
+    try{if(!src&&RI_SHEET&&RI_SHEET.status&&+RI_SHEET.seen>0)src={seen:+RI_SHEET.seen,j:RI_SHEET.status};}catch(e){}
+    if(!src)return null;
+    const j=src.j, ev=[];
+    (Array.isArray(j.relay_log)?j.relay_log:[]).forEach(e=>{
+      const m=/^(\d{4})-(\d\d)-(\d\d) (\d\d):(\d\d):(\d\d)/.exec(String(e.time||''));if(!m)return;
+      const why=typeof e.why==='string'?e.why:(RI_WHY[+e.why]||'');
+      ev.push({ts:Date.UTC(+m[1],+m[2]-1,+m[3],+m[4]-2,+m[5],+m[6]),off:!/switched ON/i.test(why)});   // the relay clock is South African time (UTC+2)
+    });
+    const on=!!(j.relay1_on&&j.relay2_on), onS=Math.min(+j.relay1_on_s||0,+j.relay2_on_s||0);
+    return {seen:src.seen,ev,on,onSince:on&&onS>0?src.seen-onS*1000:0};
+  }catch(e){return null;}
+}
+function shJudge(x,ctx){
+  const s=x.raw,en=x.en,st=x.st,nx=ctx.next;
+  if(!(x.kwh>=0.1))return {k:'short'};
   if(Math.abs(en-SH_SEED.at)<=5*60000)return {k:'full',by:'you said so'};
-  const f=String(s.full||'');
-  if(f==='full')return {k:'full'};if(f==='not_full')return {k:'not_full'};if(f==='unsure')return {k:'unsure'};
-  const map={charge_full:'full',charge_not_full:'not_full',charge_full_unsure:'unsure'};
-  const hit=(al||[]).filter(a=>map[a.type]&&+a.ts>=en-120000&&+a.ts<=en+30*60000&&(nextStart==null||+a.ts<=nextStart+60000)).sort((a,b)=>a.ts-b.ts)[0];
-  return hit?{k:map[hit.type]}:{k:'none'};
+  if(nx!=null&&nx-en<=10*60000)return {k:'not_full',by:'charging went on again '+Math.max(1,Math.round((nx-en)/60000))+' min later'};
+  const lim=Math.min(nx!=null?nx:Infinity,en+36*3600000);
+  let b=null,bo=null;const cs=x.chain||st;
+  for(const e of ctx.ent){if(e.ts<en-3*60000&&e.odo>0)bo=e;if(e.ts<=st+3*60000&&e.ts>=cs-60*60000&&typeof e.pct==='number')b=e;}
+  const a=ctx.ent.find(e=>e.ts>=en-3*60000&&e.ts<lim&&typeof e.pct==='number');
+  const parked=a&&a.where!=='Station'&&(bo&&a.odo>0?a.odo===bo.odo:a.kind==='charge');
+  if(parked&&a.pct>=99)return {k:'full',by:'100% typed after it'};
+  if(parked&&a.pct<=96)return {k:'not_full',by:n2(a.pct,0)+'% typed after it'};
+  if(parked===false||!parked){if(nx!=null&&nx-en<=60*60000&&ctx.nextKwh>=0.3)return {k:'not_full',by:'the car took more charge '+Math.round((nx-en)/60000)+' min later'};}
+  const energy=b?(+b.pct+(x.kwh+ctx.all.filter(y=>y.en>b.ts&&y.en<=st).reduce((t,y)=>t+y.kwh,0))/(1+(+S.loss||0)/100)/(+S.pack||42.7)*100):null;
+  const rl=ctx.relay, offAtStop=!!(rl&&rl.ev.some(e=>e.off&&e.ts>=en-4*60000&&e.ts<=en+90000));
+  if(offAtStop&&!(energy!=null&&energy>=95))return vdKeep(en,{k:'not_full',by:'a relay was switched off at the stop'});
+  const f=String(s.full||''), al=ctx.alert;
+  if(f==='full'||(al&&al.k==='full'))return vdKeep(en,{k:'full',by:'the phone at home saw it'});
+  if(rl&&rl.on&&!offAtStop&&rl.seen>=en+5*60000&&rl.onSince>0&&rl.onSince<=st+2*60000)return vdKeep(en,{k:'full',by:'Shelly at 0 W, relays stayed on'});
+  if(energy!=null&&energy>=95)return {k:'full',by:'the kWh fit 100% from '+n2(b.pct,0)+'%'};
+  if(energy!=null&&energy<90)return {k:'not_full',by:'the kWh only reach about '+n2(energy,0)+'%'};
+  if(f==='not_full'||(al&&al.k==='not_full'))return {k:'not_full',by:al&&/power again/i.test(al.text||'')?'charging went on again':'the phone at home saw a relay off at the stop'};
+  const old=ctx.kept[String(en)];
+  if(old&&(old.k==='full'||old.k==='not_full'))return {k:old.k,by:old.by||''};
+  if(en>ctx.now-10*60000)return {k:'unsure',by:'it has just ended'};
+  return {k:'full',by:'Shelly only: the car stopped by itself'};
 }
-function shCalc(){
+let VDm=null;
+function shVerdicts(){
+  const now=Date.now();
+  const quick=[(typeof MS!=='undefined'?MS.length:0),(typeof MS!=='undefined'&&MS.length?+MS[MS.length-1].end_ms:0),(typeof E!=='undefined'&&E?E.length:0),
+    (typeof E!=='undefined'&&E&&E.length?E.reduce((t,e)=>t+(+e.ts||0)%100000+(+e.pct||0)+(+e.odo||0),0):0)].join('/');
+  if(VDm&&VDm.quick===quick&&now-VDm.at<2000&&now>=VDm.at)return VDm.all;
+  const relay=shRelayEv(), kept=vdStore();
   const al=((sync('alerts')||{}).alerts||[]).filter(a=>!a.demo);
-  const all=(typeof MS!=='undefined'&&MS.length?MS:[]).filter(s=>+s.end_ms>0&&+s.kwh>0).map(s=>({st:+s.start_ms||+s.end_ms,en:+s.end_ms,kwh:+s.kwh,cost:(s.cost!=null&&s.cost!==''&&isFinite(+s.cost))?+s.cost:(+s.kwh)*rate(),peak:+s.peak_w||0,reason:s.end_reason||s.why||'',raw:s})).sort((a,b)=>a.st-b.st);
-  all.forEach((x,i)=>{const nx=all.slice(i+1).find(y=>y.kwh>=0.1);x.v=shVerdict(x.raw,al,nx?nx.st:null);});
-  const anchor=shGet(), eff=shEff(), loss=[+S.loss||0,SH_LOSS_B];
-  const kmOf=(kwh,l)=>kwh/(1+l/100)/(eff.v/100);
-  let odo=[anchor.odo,anchor.odo], pool=0, poolN=0, lastFull=null;
+  const sig=[quick,al.length,relay?relay.seen:0,Object.keys(kept).length,Math.floor(now/60000)].join('/');
+  if(VDm&&VDm.sig===sig){VDm.at=now;return VDm.all;}
+  const map={charge_full:'full',charge_not_full:'not_full',charge_full_unsure:'unsure'};
+  const ent=shEntries(), all=shSessions();
+  all.forEach((x,i)=>{
+    const nxs=all.slice(i+1).find(y=>y.kwh>=0.1), next=nxs?nxs.st:null;
+    const pv=i>0?all[i-1]:null;x.chain=pv&&x.st-pv.en<=60*60000?(pv.chain||pv.st):x.st;   // charges less than an hour apart are one stand
+    const hit=al.filter(a=>map[a.type]&&+a.ts>=x.en-120000&&+a.ts<=x.en+30*60000&&(next==null||+a.ts<=next+60000)).sort((a,b)=>a.ts-b.ts)[0];
+    x.next=next;
+    x.v=shJudge(x,{next,nextKwh:nxs?nxs.kwh:0,all,ent,relay,kept,now,alert:hit?{k:map[hit.type],text:hit.text||''}:null});
+  });
+  VDm={sig,quick,at:now,all};return all;
+}
+/* for the Learning page (farrq-22.js) and the trip maths (index.html) */
+window.farrVerdict=function(s){try{const en=+s.end_ms,x=shVerdicts().find(y=>y.en===en);return x&&x.v?x.v.k:'';}catch(e){return '';}};
+/* A trip that follows a charge with no charge log: if that charge ended full and the car stood still from the last reading until it was plugged in,
+   the trip starts at 100% from the end of the charge. Any other unlogged charge in between makes the battery % unknown: the trip then counts for distance only. */
+window.farrTripStart=function(prevTs,ts){
+  try{
+    const ss=shVerdicts().filter(x=>x.kwh>=0.1&&x.en>prevTs&&x.en<=ts);
+    if(!ss.length)return null;
+    const last=ss[ss.length-1];
+    if(last.v.k==='full'&&prevTs>=ss[0].st-30*60000)return {pct:100,ts:last.en};
+    return {unknown:true};
+  }catch(e){return null;}
+};
+/* The real odometer while the car stood on a charge, or null when no reading proves it. */
+function shOdoAt(x,ent,anchor){
+  let b=null;for(const e of ent){if(e.ts<=x.st+3*60000&&e.odo>0)b=e;}
+  if(b&&b.ts>=(x.chain||x.st)-30*60000)return +b.odo;                       // read just before it was plugged in
+  const a=ent.find(e=>e.ts>=x.en-3*60000&&(x.next==null||e.ts<x.next)&&e.odo>0);
+  if(a&&b&&a.where!=='Station'&&+a.odo===+b.odo)return +a.odo;                // same odometer before and after: the car did not move
+  if(anchor&&anchor.src==='typed'&&anchor.at>=x.en&&(x.next==null||anchor.at<x.next)&&anchor.at-x.en<=24*3600000)return +anchor.odo;
+  return null;
+}
+/* Wall kWh per 100 km, learned from stretches between two full charges that both have a real odometer. No charging-loss figure is used. */
+function shWall(all,ent,anchor){
+  const pts=[];
+  all.forEach(x=>{
+    x.odoReal=null;
+    if(!x.v||x.v.k!=='full')return;
+    x.odoReal=Math.abs(x.en-SH_SEED.at)<=5*60000?SH_SEED.odo:shOdoAt(x,ent,anchor);
+    if(x.odoReal>0)pts.push({en:x.en,odo:x.odoReal});
+  });
+  let kwh=0,km=0,n=0;
+  for(let i=pts.length-1;i>0&&n<8;i--){
+    const A=pts[i-1],B=pts[i],d=B.odo-A.odo;
+    if(!(d>=30))continue;
+    if(ent.some(e=>e.where==='Station'&&e.ts>A.en&&e.ts<=B.en))continue;
+    const k=all.filter(y=>y.en>A.en&&y.en<=B.en).reduce((t,y)=>t+y.kwh,0), r=k/d*100;
+    if(!(r>=10&&r<=25))continue;
+    kwh+=k;km+=d;n++;
+  }
+  if(n&&km>=100)return {v:kwh/km*100,app:null,n,km,kwh,why:'learned from '+n+' full-to-full stretch'+(n>1?'es':'')+' with real odometers, '+n2(km,0)+' km'};
+  return {v:SH_WALL_DEFAULT,app:null,n:0,km:0,kwh:0,why:'start value, until there are full-to-full stretches with real odometers'};
+}
+function shEff(){const all=shVerdicts();return shWall(all,shEntries(),shGet());}
+function shVerdict(s){return {k:window.farrVerdict(s)||'none'};}
+function shCalc(){
+  const all=shVerdicts(), ent=shEntries(), anchor=shGet(), eff=shWall(all,ent,anchor);
+  const kmOf=kwh=>kwh/(eff.v/100);
+  const evs=all.filter(x=>x.en>SH_SEED.at+60000&&x.v.k!=='short').map(x=>({t:x.en,x}));
+  if(anchor.src==='typed'&&anchor.at>SH_SEED.at)evs.push({t:anchor.at,typed:anchor});
+  evs.sort((a,b)=>a.t-b.t);
+  let odo=SH_SEED.odo, pool=0, poolN=0, lastFull=null, base={odo:SH_SEED.odo,at:SH_SEED.at,how:'start'};
   const fulls=[];
-  all.filter(x=>x.en>anchor.at+60000&&x.v.k!=='short').forEach(x=>{
-    pool+=x.kwh;poolN++;
+  evs.forEach(ev=>{
+    if(ev.typed){odo=+ev.typed.odo;pool=0;poolN=0;base={odo,at:ev.t,how:'typed'};return;}
+    const x=ev.x;pool+=x.kwh;poolN++;
     if(x.v.k==='full'){
-      const km=loss.map(l=>kmOf(pool,l));
-      odo=[odo[0]+km[0],odo[1]+km[1]];
-      const row={st:x.st,en:x.en,kwh:x.kwh,pool,poolN,km,odo:odo.slice()};fulls.push(row);lastFull=row;pool=0;poolN=0;
+      const km=kmOf(pool), est=odo+km, real=x.odoReal>0?x.odoReal:null;
+      const row={st:x.st,en:x.en,kwh:x.kwh,pool,poolN,km,odo:est,real,by:x.v.by||''};fulls.push(row);lastFull=row;
+      odo=real!=null?real:est;if(real!=null)base={odo:real,at:x.en,how:'full'};
+      pool=0;poolN=0;
     }
   });
+  const lastReal=[...ent].reverse().find(e=>e.odo>0)||null;
+  const least=odo+kmOf(pool), useReal=lastReal&&lastReal.ts>=base.at&&+lastReal.odo>least;
   const seedSess=all.filter(x=>Math.abs(x.en-SH_SEED.at)<=5*60000)[0]||null;
-  return {all,anchor,eff,loss,odo,pool,poolN,minKm:loss.map(l=>kmOf(pool,l)),fulls,lastFull,seedSess,kmOf};
+  return {all,anchor,eff,base,odo:useReal?+lastReal.odo:least,least,firm:pool===0&&!useReal,lastReal,pool,poolN,minKm:kmOf(pool),fulls,lastFull,seedSess,kmOf};
 }
 const shDT=ts=>new Date(ts).toLocaleDateString('en-ZA',{day:'2-digit',month:'short'})+' '+hmClock(ts);
 const shRange=(a,b)=>shDT(a)+' to '+(new Date(a).toDateString()===new Date(b).toDateString()?hmClock(b):shDT(b));
 function shTag(v){
   const t={full:['Full (100%)','var(--green,#22c55e)'],not_full:['Not completed','var(--gold)'],unsure:['Not sure','var(--muted)'],none:['Not sure','var(--muted)'],short:['Too short, ignored','var(--muted)']}[v.k]||['Not sure','var(--muted)'];
-  return `<span class="tag" style="color:${t[1]};border-color:${t[1]}">${t[0]}</span>`+(v.by?`<span class="small">${esc(v.by)}</span>`:'');
+  return `<span class="tag" style="color:${t[1]};border-color:${t[1]}">${t[0]}</span>`+(v.by?` <span class="small">${esc(v.by)}</span>`:'');
 }
 function shHead(t,sub){return `<div class="label" style="margin:16px 0 4px;padding-top:10px;border-top:2px solid var(--line,#8884)">${esc(t)}</div>`+(sub?`<div class="small" style="margin:0 0 4px">${esc(sub)}</div>`:'');}
 function shellyHTML(){
-  const c=shCalc(), a=c.anchor, k0=n2(c.loss[0],0), k1=n2(c.loss[1],1);
-  let h=`<div class="card"><div class="hdr-row"><div class="label">Shelly meter · true data</div><div class="small">${c.all.length?esc(ago(c.all[c.all.length-1].en)):''}</div></div>`+
-    `<div class="small" style="margin:4px 0 6px">Everything here comes from the Shelly's measured charges, copied from the Sheet. The other blocks are not changed.</div>`;
-  /* 1 start point */
-  h+=shHead('1 · Where we start');
-  h+=R('Start odometer',n2(a.odo,0)+' km');
-  h+=R('Taken at',esc(shDT(a.at)));
-  h+=R('How',a.src==='typed'?'You typed it':'Your odometer at 11:44, then a full charge');
-  if(a.src!=='typed'&&c.seedSess){
-    h+=R('Start charge',esc(shRange(c.seedSess.st,c.seedSess.en)));
-    h+=R('kWh charged',n2(c.seedSess.kwh,2)+' kWh · '+hmRand(c.seedSess.cost));
-    h+=R('Battery before and after','91% to 100%');
-  }
-  /* 2 odometer estimate */
-  h+=shHead('2 · Odometer estimate','Updated at each full charge. Two values, one for each charging loss.');
-  h+=R('Efficiency used',n2(c.eff.v,1)+' kWh per 100 km');
-  h+=`<div class="small" style="margin:0 0 4px">Why: ${esc(c.eff.why)}.${c.eff.app!=null?' App figure now: '+n2(c.eff.app,1)+'.':''}</div>`;
-  h+=R('Loss '+k0+'% (app setting)',n2(c.odo[0],0)+' km');
-  h+=R('Loss '+k1+'% (learned in the Sheet)',n2(c.odo[1],0)+' km');
-  h+=`<div class="small" style="margin:0 0 4px">${c.lastFull?'As at the full charge ending '+esc(shDT(c.lastFull.en))+'.':'No new full charge yet. These are the start values.'}</div>`;
+  const c=shCalc(), a=c.anchor;
+  let live=null;try{live=JSON.parse(localStorage.getItem('farrq.remoteLive')||'null');}catch(e){}
+  const lastEn=c.all.length?c.all[c.all.length-1].en:0;
+  const head=live&&live.charging&&live.at>lastEn?'charging now':(lastEn?'last charge ended '+ago(lastEn):'');
+  let h=`<div class="card"><div class="hdr-row"><div class="label">Shelly meter · true data</div><div class="small">${esc(head)}</div></div>`+
+    `<div class="small" style="margin:4px 0 6px">Everything here comes from the Shelly's measured charges, copied from the Sheet, and the readings in the log.</div>`;
+  /* 1 last real odometer */
+  h+=shHead('1 · Last real odometer');
+  const lr=c.lastReal&&(a.src!=='typed'||c.lastReal.ts>=a.at)?c.lastReal:null;
+  if(lr){h+=R('Odometer',n2(lr.odo,0)+' km')+R('Read at',esc(shDT(lr.ts))+(lr.who?' · '+esc(lr.who):''));}
+  else if(a.src==='typed'){h+=R('Odometer',n2(a.odo,0)+' km')+R('Read at',esc(shDT(a.at))+' · typed in the box below');}
+  else{h+=R('Odometer',n2(SH_SEED.odo,0)+' km')+R('Read at',esc(shDT(SH_SEED.at))+' · start value');}
+  /* 2 odometer worked out */
+  h+=shHead('2 · Odometer worked out','From the last full charge with a real odometer, plus the kWh charged since. No charging-loss figure is used.');
+  h+=R(c.firm?'Odometer (worked out)':'Odometer (at least)',n2(c.odo,0)+' km');
+  h+=R('Efficiency used',n2(c.eff.v,1)+' kWh at the wall per 100 km');
+  h+=`<div class="small" style="margin:0 0 4px">Why: ${esc(c.eff.why)}.</div>`;
+  h+=R('Counting from',n2(c.base.odo,0)+' km · '+esc(shDT(c.base.at))+(c.base.how==='full'?' · full charge':c.base.how==='typed'?' · typed by you':' · start value'));
   /* 3 since last full */
-  h+=shHead('3 · Since the last full charge','The car has been driven at least this far. Not-full charges only add to the kWh.');
+  h+=shHead('3 · Since the last full charge','Charges that did not end full only add to the kWh. The car has been driven at least this far.');
   h+=R('Charges since',String(c.poolN));
   h+=R('kWh charged since',n2(c.pool,2)+' kWh · '+hmRand(c.pool*rate()));
-  h+=R('Driven at least, loss '+k0+'%',n2(c.minKm[0],0)+' km');
-  h+=R('Driven at least, loss '+k1+'%',n2(c.minKm[1],0)+' km');
+  h+=R('Driven at least',n2(c.minKm,0)+' km');
   /* 4 full charges */
-  h+=shHead('4 · Full charges after the start','Newest first. The km come from the kWh charged since the full charge before.');
+  h+=shHead('4 · Full charges','Newest first. Worked out km against the real odometer, where one was read.');
   const f=c.fulls.slice().reverse();
-  h+=f.length?f.slice(0,8).map(x=>`<div class="row"><div>${esc(shRange(x.st,x.en))}<div class="small">${n2(x.pool,2)} kWh in ${x.poolN} charge${x.poolN>1?'s':''} · +${n2(x.km[0],0)} km (${k0}%) · +${n2(x.km[1],0)} km (${k1}%)</div></div><div style="text-align:right"><b>${n2(x.odo[0],0)} km</b><div class="small">${n2(x.odo[1],0)} km</div></div></div>`).join(''):'<div class="small">None yet.</div>';
+  h+=f.length?f.slice(0,8).map(x=>`<div class="row"><div>${esc(shRange(x.st,x.en))}<div class="small">${n2(x.pool,2)} kWh in ${x.poolN} charge${x.poolN>1?'s':''} · +${n2(x.km,0)} km</div></div><div style="text-align:right"><b>${n2(x.odo,0)} km</b><div class="small">${x.real!=null?'real '+n2(x.real,0)+' km ('+(Math.round(x.odo-x.real)>0?'+':'')+Math.round(x.odo-x.real)+')':'no real reading'}</div></div></div>`).join(''):'<div class="small">None yet.</div>';
   /* 5 last sessions */
-  h+=shHead('5 · Latest Shelly charges','Start, end, kWh, cost and what happened at the end.');
+  h+=shHead('5 · Latest Shelly charges','Start, end, kWh, cost, what happened at the end and how that is known.');
   const L=c.all.slice().reverse().slice(0,12);
-  h+=L.length?L.map(x=>`<div class="row"><div>${esc(shRange(x.st,x.en))}<div class="small">${hmDur(Math.round((x.en-x.st)/60000))} · peak ${n2(x.peak,0)} W${x.reason?' · '+esc(x.reason):''}</div><div style="margin-top:3px">${shTag(x.v)}</div></div><div style="text-align:right"><b>${n2(x.kwh,2)} kWh</b><div class="small">${hmRand(x.cost)}</div></div></div>`).join(''):'<div class="small">No Shelly charges on this phone yet.</div>';
+  h+=L.length?L.map(x=>`<div class="row"><div>${esc(shRange(x.st,x.en))}<div class="small">${hmDur(Math.round((x.en-x.st)/60000))} · peak ${n2(x.peak,0)} W</div><div style="margin-top:3px">${shTag(x.v)}</div></div><div style="text-align:right"><b>${n2(x.kwh,2)} kWh</b><div class="small">${hmRand(x.cost)}</div></div></div>`).join(''):'<div class="small">No Shelly charges on this phone yet.</div>';
   /* 6 totals */
   const now=new Date(), from=new Date(now.getFullYear(),now.getMonth(),1).getTime(), wk=Date.now()-7*864e5;
   const tot=(cut)=>{const r={n:0,kwh:0,cost:0,full:0,nf:0,un:0};c.all.filter(x=>x.en>=cut&&x.v.k!=='short').forEach(x=>{r.n++;r.kwh+=x.kwh;r.cost+=x.cost;if(x.v.k==='full')r.full++;else if(x.v.k==='not_full')r.nf++;else r.un++;});return r;};
   const t7=tot(wk), tm=tot(from);
-  h+=shHead('6 · Totals','Charges under 0.1 kWh are left out.');
+  h+=shHead('6 · Totals','Finished charges only. Charges under 0.1 kWh are left out.');
   [['Last 7 days',t7],['This month',tm]].forEach(([n,t])=>{
     h+=R(n,n2(t.kwh,2)+' kWh · '+hmRand(t.cost));
     h+=`<div class="small" style="margin:0 0 4px">${t.n} charges: ${t.full} full · ${t.nf} not completed · ${t.un} not sure</div>`;
   });
-  /* 7 real odometer */
-  h+=shHead('7 · Your real odometer','Type it when you know it. Best right after a full charge, with no driving since.');
+  /* 7 odometer check */
+  h+=shHead('7 · Odometer check','Type the real odometer when you know it. Best right after a full charge, with no driving since.');
   h+=`<div style="display:flex;gap:8px;align-items:center;margin:6px 0"><input id="shOdo" type="number" inputmode="decimal" placeholder="Odometer in km" style="flex:1 1 auto;width:auto;min-width:0"><button class="btn" style="flex:0 0 auto;width:auto;padding:10px 16px;margin:0" onclick="farrShellySet()">Use this</button></div>`;
-  h+=`<div class="small">Now using: ${n2(a.odo,0)} km, ${a.src==='typed'?'typed by you at ':'start value, '}${esc(shDT(a.at))}.</div>`;
-  if(a.src==='typed')h+=`<div style="margin-top:6px"><button class="btn ghost" onclick="farrShellyReset()">Go back to the 1981 km start</button></div>`;
+  h+=`<div class="small">${a.src==='typed'?'Last typed here: '+n2(a.odo,0)+' km at '+esc(shDT(a.at))+'.':'Nothing typed here yet. The readings in the log are used.'}</div>`;
+  if(a.src==='typed')h+=`<div style="margin-top:6px"><button class="btn ghost" onclick="farrShellyReset()">Forget the typed odometer</button></div>`;
   /* 8 rules */
   h+=shHead('How to read this');
-  h+=`<div class="small">Full: the Shelly went to 0 W while both relays stayed on.<br>Not completed: a relay went off while the car was still charging.<br>Not sure: the app could not tell. It does not count as full.<br>Km = kWh charged, minus the loss, divided by kWh per km.<br>The odometer estimate only moves at a full charge.</div>`;
+  h+=`<div class="small">Full: the car stopped by itself. The small text says how that is known.<br>Not completed: it was stopped early, or it went on charging soon after.<br>Not sure: it has only just ended.<br>Km = kWh at the wall divided by wall kWh per 100 km.<br>The odometer is firm at a full charge. In between it shows at least.</div>`;
   return h+`</div>`;
 }
 let shLast='';
@@ -492,9 +629,9 @@ window.farrShellySet=function(){
   const i=document.getElementById('shOdo');const v=i?parseFloat(i.value):NaN;
   if(isNaN(v)||v<=0)return say('Type your odometer in km first.');
   shSet({odo:v,at:Date.now(),startPct:null,src:'typed'});
-  if(i)i.value='';paintShelly(true);say('Odometer saved in the Shelly block');
+  if(i)i.value='';paintShelly(true);say('Odometer check saved');
 };
-window.farrShellyReset=function(){try{localStorage.removeItem(SH_KEY);}catch(e){}paintShelly(true);say('Back to the 1981 km start');};
+window.farrShellyReset=function(){try{localStorage.removeItem(SH_KEY);}catch(e){}paintShelly(true);say('Typed odometer forgotten');};
 window.farrShelly={calc:shCalc,html:shellyHTML,paint:paintShelly};
 function paintHomeCard(){
   try{paintShelly();}catch(e){}
@@ -505,9 +642,10 @@ function paintHomeCard(){
   const ma=$('meterAlert');
   if(ma)ma.innerHTML=unread?`<div class="card" style="border-color:var(--gold)" onclick="go('alerts')"><div class="small" style="color:var(--gold)">${unread} new alert${unread>1?'s':''}. Tap to open.</div></div>`:'';
   if(!v){
-    h+=`<div class="card" onclick="go('meter')"><div class="hdr-row"><div class="label">EV meter</div><div class="small">${esc(st)}</div></div>`+
-       `<div class="small">${L&&L.everSeen?'The meter is not answering. Last seen '+ago(L.lastSeen)+'.':'Meter not found yet. It will show here once it is connected at 192.168.1.128.'}</div></div>`;
-    h+=remoteLiveHTML();
+    const rl0=remoteLiveHTML();
+    h+=`<div class="card" onclick="go('meter')"><div class="hdr-row"><div class="label">EV meter</div><div class="small">${esc(rl0?'Away from home':st)}</div></div>`+
+       `<div class="small">${rl0?'This phone is not on the home Wi-Fi, so it cannot read the Shelly itself. The figures below are the copy from the Sheet.':(L&&L.everSeen?'The meter is not answering. Last seen '+ago(L.lastSeen)+'.':'Meter not found yet. It will show here once it is connected at 192.168.1.128.')}</div></div>`;
+    h+=rl0;
     el.innerHTML=h;return;
   }
   const se=v.session;
@@ -591,7 +729,7 @@ function paintRelayAuto(){
   const v=LIVE&&LIVE.live;
   paintModeChips();
   const a=v&&v.auto;
-  const t=!v?'Meter not connected, so AUTO cannot run yet.':
+  const t=!v?(localStorage.getItem('farrq.remoteLive')?'Away from home: the relays and AUTO only work on the home Wi-Fi. See Relay Info for the copy from the Sheet.':'Meter not connected, so AUTO cannot run yet.'):
     v.meter_type==='shelly'?'AUTO is not available with the Shelly meter yet. START and STOP work as before and charging is never blocked.':
     v.mode!=='AUTO'?'MANUAL: the meter never switches anything.':
     'AUTO is '+(a&&a.state?a.state:'watching')+(a&&a.below_s?' · below the level for '+a.below_s+' s':'')+'.';
@@ -1254,7 +1392,7 @@ function riPaint(msg){
     h+='<div class="small" style="margin:0 0 8px">'+(RI.from==='sheet'?'Copy from the Google Sheet, seen '+esc(ago(RI.seen))+(RI.phone?' by '+esc(RI.phone):'')+'. Not live.':'Live from the relay board, '+esc(ago(RI.seen))+'.')+'</div>';
     h+=section('Relay board',riRows(j).map(r=>R(esc(r[0]),esc(r[1]))).join('')||'<div class="small">Nothing reported</div>');
     const lg=riLogRows(j);
-    h+=section('OFF and restart log, newest first',lg.length?lg.map(r=>R(esc(r[0]),esc(r[1]))).join(''):'<div class="small">No entries yet. (Firmware 2.4 logs OFF and restart events; 2.5 will keep 50 and add ON events.)</div>');
+    h+=section('Relay log: ON, OFF and restarts, newest first',lg.length?lg.map(r=>R(esc(r[0]),esc(r[1]))).join(''):'<div class="small">No entries yet. (Firmware 2.4 logs OFF and restart events; 2.5 will keep 50 and add ON events.)</div>');
   }else h+='<div class="card small">No relay data yet. Tap Refresh when this phone is on the home Wi-Fi.</div>';
   const sh=RI_SHEET;
   h+=section('Last seen from the Sheet',sh?R('Seen',esc(tstamp(sh.seen))+' ('+esc(ago(sh.seen))+')')+(sh.phone?R('By phone',esc(sh.phone)):'')+(sh.status&&sh.status.fw_diag?R('Firmware',esc(sh.status.fw_diag)):'')+(sh.status&&sh.status.boot_no!==undefined?R('Boot number',esc(sh.status.boot_no)):''):'<div class="small">Empty. Fills when a phone at home taps Refresh here and the Sheet script 2.2.8.5 is deployed. Firmware 2.5 will push it by itself.</div>');

@@ -92,10 +92,14 @@ jobs:
           cp FARR-Q-Charge-*.apk "$APK" 2>/dev/null || true
           NOTES="docs/${VER}-release-notes.md"
           if [ ! -f "$NOTES" ]; then NOTES="README.md"; fi
+          # A side version (name ends in _A, _B ...) is for one phone only: it is published but never marked "latest",
+          # so the in-app update link keeps pointing at the last normal version.
+          LATEST="--latest"
+          case "$VER" in *_[A-Z]) LATEST="--latest=false" ;; esac
           if gh release view "$VER" >/dev/null 2>&1; then
             gh release upload "$VER" "$APK" --clobber
-            gh release edit "$VER" --notes-file "$NOTES" --latest
+            gh release edit "$VER" --notes-file "$NOTES" $LATEST
           else
-            gh release create "$VER" "$APK" --target "$GITHUB_SHA" --latest \
+            gh release create "$VER" "$APK" --target "$GITHUB_SHA" $LATEST \
               --title "FARR Q Charge ${VER}" --notes-file "$NOTES"
           fi

@@ -10,6 +10,8 @@ const row=(a,b)=>`<div class="row"><span>${a}</span><b style="text-align:right">
 const say=m=>{try{toast(m);}catch(e){}};
 const call=(m,a)=>window.farrCall?window.farrCall(m,a):Promise.reject(new Error('Only works inside the Android app'));
 const syncc=(m,a)=>window.farrSync?window.farrSync(m,a):null;
+/* 2.2.8.5_A: one verdict for the whole app (worked out in farrq-17.js from the saved records) */
+const fl=s=>{try{if(s&&window.farrVerdict){const v=window.farrVerdict(s);if(v==='full'||v==='not_full'||v==='unsure')return v;if(v==='none'||v==='short')return '';}}catch(e){}return (s&&s.full)||'';};
 const rate=()=>{try{return +S.rateHome||3.88;}catch(e){return 3.88;}};
 const pack=()=>{try{return +S.pack||42.7;}catch(e){return 42.7;}};
 const lossPct=()=>{try{return S.loss==null||isNaN(+S.loss)?10:+S.loss;}catch(e){return 10;}};
@@ -31,7 +33,7 @@ function addPct(pct,src,kwh){
 }
 function anchors(){
   const a=PCT.map(p=>({ts:p.ts,pct:+p.pct,kwh:p.kwh,src:'session'}));
-  try{(E||[]).forEach(e=>{if(e&&typeof e.pct==='number'&&e.ts&&!e.auto&&e.pct>=0&&e.pct<=100)a.push({ts:e.ts,pct:e.pct,kwh:null,src:'log'});});}catch(x){}
+  try{(E||[]).forEach(e=>{if(e&&typeof e.pct==='number'&&e.ts&&!e.auto&&e.pct>=0&&e.pct<=100)a.push({ts:e.ts,pct:e.pct,kwh:null,src:'log',kind:e.kind||''});});}catch(x){}
   return a.sort((x,y)=>x.ts-y.ts);
 }
 
@@ -58,7 +60,7 @@ function cumKwh(pts,ts){let k=0;for(const p of pts){if(p[0]+60000<=ts)k+=p[1]/60
 
 /* ---------- learning ---------- */
 let MODEL=null,MODELSIG='';
-function sig(){return sessions().length+'/'+sessions().filter(x=>x.full).map(x=>x.full[0]).join('')+'/'+PCT.length+'/'+((typeof E!=='undefined'&&E)?E.length:0)+'/'+Object.keys(MINS).length+'/'+pack()+'/'+lossPct();}
+function sig(){return sessions().length+'/'+sessions().map(x=>(fl(x)||'-')[0]).join('')+'/'+PCT.length+'/'+((typeof E!=='undefined'&&E)?E.length:0)+'/'+Object.keys(MINS).length+'/'+pack()+'/'+lossPct();}
 function buildModel(){
   const key=sig(); if(MODEL&&MODELSIG===key)return MODEL;
   const ss=sessions().filter(s=>s.kwh>=0.2&&s.duration_s>=300), an=anchors();
@@ -68,10 +70,10 @@ function buildModel(){
     const nextStart=i+1<ss.length?ss[i+1].start_ms:Infinity;
     let b=null,a=null;
     for(const x of an){if(x.ts<=s.start_ms+180000&&x.ts>=s.start_ms-12*3600000)b=x;}
-    for(const x of an){if(x.ts>=s.end_ms-180000&&x.ts<=s.end_ms+8*3600000&&x.ts<nextStart){a=x;break;}}
+    for(const x of an){if(x.ts>=s.end_ms-180000&&(x.ts<=s.end_ms+8*3600000||(x.kind==='charge'&&x.ts<=s.end_ms+36*3600000))&&x.ts<nextStart){a=x;break;}}
     /* 2.2.3: a charge the car ended by itself (Shelly at 0 W, both relays still ON for 5 min) counts as 100%, if the kWh fits within 5% */
     let autoFull=null;
-    if(s.full==='full'){
+    if(fl(s)==='full'){
       if(a)autoFull='typed';
       else if(b){
         if(FULL_OK(b.pct,s.kwh)){a={ts:s.end_ms,pct:100,kwh:null,src:'auto'};autoFull='clean';}
@@ -105,8 +107,8 @@ function FULL_OK(startPct,kwhWall){
 }
 function fullCounts(){
   const M=buildModel(); const c={full:0,clean:0,unsure:0,notFull:0,nostart:0};
-  sessions().forEach(s=>{if(s.full==='not_full')c.notFull++;});
-  M.info.forEach(r=>{if(r.autoFull==='clean')c.clean++;else if(r.autoFull==='unsure')c.unsure++;else if(r.autoFull==='nostart')c.nostart++;if(r.s.full==='full')c.full++;});
+  sessions().forEach(s=>{if(fl(s)==='not_full')c.notFull++;});
+  M.info.forEach(r=>{if(r.autoFull==='clean')c.clean++;else if(r.autoFull==='unsure')c.unsure++;else if(r.autoFull==='nostart')c.nostart++;if(fl(r.s)==='full')c.full++;});
   return c;
 }
 function conf(n){return n>=10?'Good':n>=3?'Improving':'Rough';}
@@ -442,14 +444,14 @@ function calcAll(){
 window.farrFullTag=function(r){
   try{
     if(!r||r.type!=='charge')return '';
-    const s=sessions().find(x=>x.end_ms===r.ts)||sessions().find(x=>r.ts>=x.start_ms-60000&&r.ts<=x.end_ms+24*3600000&&x.full);
-    if(!s||!s.full)return '';
-    if(s.full==='full'){
+    const s=sessions().find(x=>x.end_ms===r.ts)||sessions().find(x=>r.ts>=x.start_ms-60000&&r.ts<=x.end_ms+24*3600000&&fl(x));
+    if(!s||!fl(s))return '';
+    if(fl(s)==='full'){
       const rec=buildModel().info.find(x=>x.s.start_ms===s.start_ms);
       const used=rec&&rec.autoFull==='clean';
       return '<span class="tag g">FULL CHARGE</span>'+(used?'':'<span class="tag">NOT USED FOR LEARNING</span>');
     }
-    if(s.full==='not_full')return '<span class="tag">NOT FULL</span>';
+    if(fl(s)==='not_full')return '<span class="tag">NOT FULL</span>';
     return '<span class="tag g">FULL CHARGE?</span><span class="tag">NOT USED FOR LEARNING</span>';
   }catch(e){}
   return '';

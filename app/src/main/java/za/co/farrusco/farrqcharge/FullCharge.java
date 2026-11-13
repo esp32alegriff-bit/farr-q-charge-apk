@@ -58,10 +58,13 @@ final class FullCharge {
         FullLogic.State st = new FullLogic.State();
         st.endMs = p.optLong("end_ms"); st.first = p.optBoolean("first"); st.relaysOnFirst = p.optBoolean("relays_on_first");
         final String[] why = {""};
+        final int[] lastRead = {FullLogic.RELAY_BOTH_ON};   // 2.2.8.5_A: remember whether the last relay read failed, for the alert text only
         String v = FullLogic.step(st, now, live.optBoolean("charging"), live.optDouble("watts", 0), () -> {
             JSONObject r = Relay.status(c);
-            if (!r.optBoolean("connected")) return FullLogic.RELAY_UNREAD;
-            return r.optBoolean("relay1On") && r.optBoolean("relay2On") ? FullLogic.RELAY_BOTH_ON : FullLogic.RELAY_NOT_BOTH_ON;
+            int k = !r.optBoolean("connected") ? FullLogic.RELAY_UNREAD
+                    : r.optBoolean("relay1On") && r.optBoolean("relay2On") ? FullLogic.RELAY_BOTH_ON : FullLogic.RELAY_NOT_BOTH_ON;
+            lastRead[0] = k;
+            return k;
         });
         if (v == null) {
             try { p.put("first", st.first); p.put("relays_on_first", st.relaysOnFirst); } catch (JSONException ignored) {}
@@ -69,7 +72,9 @@ final class FullCharge {
             return;
         }
         if ("not_full".equals(v)) why[0] = live.optBoolean("charging") ? "The car started drawing power again, so the stop was a pause." : "A relay was switched off while the car was charging.";
-        if ("unsure".equals(v)) why[0] = st.relaysOnFirst ? "A relay was switched off before 5 minutes had passed." : "Not decided in time.";
+        if ("unsure".equals(v)) why[0] = !st.relaysOnFirst ? "Not decided in time."
+                : lastRead[0] == FullLogic.RELAY_UNREAD ? "The relay could not be read, so this phone could not confirm it. The Shelly block works it out afterwards."
+                : "A relay was switched off before 5 minutes had passed.";
         finish(c, p, v, why[0]);
     }
 

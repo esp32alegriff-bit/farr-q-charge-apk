@@ -20,7 +20,7 @@ const {chromium}=require(process.env.PW_MODULE||'playwright');
  ok(await pg.evaluate(()=>/Relay Info/.test(document.getElementById('s-set').innerText)),'Settings has Relay Info button');
  await pg.evaluate(()=>go('relayinfo'));await pg.waitForTimeout(600);
  const t=await pg.evaluate(()=>document.getElementById('relayInfoBody').innerText.replace(/\s+/g,' '));const tl=t.toLowerCase();
- for(const x of ['relay-latch-2.4','Boot number 7','power on','-85 dBm','Wi-Fi channel 6','Wi-Fi drops 2','TX power now 19.5','CrowPanel','Waveshare','Relay 1 (Eskom) ON','Relay 2 (EV) OFF','Ignored frames 4','Free memory','Lowest memory','Real time valid yes','Log in flash OK yes','new future field 42','Last seen from the Sheet','OFF and restart log'])
+ for(const x of ['relay-latch-2.4','Boot number 7','power on','-85 dBm','Wi-Fi channel 6','Wi-Fi drops 2','TX power now 19.5','CrowPanel','Waveshare','Relay 1 (Eskom) ON','Relay 2 (EV) OFF','Ignored frames 4','Free memory','Lowest memory','Real time valid yes','Log in flash OK yes','new future field 42','Last seen from the Sheet','Relay log: ON, OFF and restarts'])
    ok(tl.includes(x.toLowerCase()),'shown: '+x);
  ok(t.indexOf('09:00')<t.indexOf('boot 6')||t.indexOf('boot 6')<t.indexOf('09:00'),'log shown');
  const lg=await pg.evaluate(()=>farrRelayInfoTest.log(JSON.parse('{"relay_log":[{"boot":6,"since_boot_s":100},{"boot":7,"since_boot_s":50},{"boot":7,"since_boot_s":900}]}')).map(r=>r[0]));
