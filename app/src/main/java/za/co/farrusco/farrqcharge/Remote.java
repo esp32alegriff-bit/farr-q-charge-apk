@@ -35,9 +35,12 @@ final class Remote {
             payload.put("phone", cfg.optString("remoteName", "").isEmpty() ? "Phone" : cfg.optString("remoteName"));
             payload.put("app", Store.APP_VERSION);
             String kind = payload.optString("kind");
+            boolean backfill = false;
             if ("app".equals(kind) || "pull".equals(kind)) {   // 2.2.5: also bring back the alerts the phone at home raised
                 payload.put("wantAlerts", true);
-                payload.put("since", AlertMerge.requestSince(Store.getLong(c, "alertsSince", 0)));
+                // 2.2.8.5_C: once, ask for every alert the Sheet holds, quietly, so the alert list is complete again (and the cursor is reset)
+                backfill = Store.getLong(c, "alertsBackfillC", 0) == 0;
+                payload.put("since", backfill ? 1L : AlertMerge.requestSince(Store.getLong(c, "alertsSince", 0)));
             }
             String reply;
             try { reply = Net.request("POST", url, payload.toString(), null, 25000); }
@@ -57,7 +60,7 @@ final class Remote {
             if (r.has("readings")) out.put("readings", r.get("readings"));   // the other phone's entries, merged by the app screens
             if (r.has("meter")) out.put("meter", r.get("meter"));            // 2.2.4: finished Shelly charges and the last meter reading, copied by the phone at home
             if (r.has("relay")) out.put("relay", r.get("relay"));            // 2.2.8.5: relay board details copied by the phone at home
-            try { applyAlerts(c, r); } catch (Exception ignored) { /* alerts never stop a sync */ }
+            try { applyAlerts(c, r, backfill); } catch (Exception ignored) { /* alerts never stop a sync */ }
         } catch (JSONException e) {
             throw new IOException("Could not prepare the data to send");
         }
@@ -65,27 +68,29 @@ final class Remote {
     }
 
     /** 2.2.5: puts the alerts the Sheet returned into this phone's alert log and shows them (this phone's own ticks decide which). */
-    private static void applyAlerts(Context c, JSONObject r) {
+    private static void applyAlerts(Context c, JSONObject r, boolean backfill) {
         JSONArray a = r.optJSONArray("alerts");
         if (a == null) return;
         long cursor = Store.getLong(c, "alertsSince", 0);
-        if (cursor <= 0) { Store.putLong(c, "alertsSince", r.optLong("now", System.currentTimeMillis())); return; }   // first contact: old alerts are not replayed
-        long max = cursor;
+        if (cursor <= 0 && !backfill) { Store.putLong(c, "alertsSince", r.optLong("now", System.currentTimeMillis())); return; }   // first contact: old alerts are not replayed
+        final long nowMs = System.currentTimeMillis();
+        long max = backfill ? 0 : cursor;
         java.util.ArrayList<JSONObject> fresh = new java.util.ArrayList<>();
         for (int i = a.length() - 1; i >= 0; i--) {          // the Sheet sends newest first; show oldest first
             JSONObject o = a.optJSONObject(i);
             if (o == null) continue;
-            max = Math.max(max, o.optLong("ts"));
+            if (o.optLong("ts") <= nowMs + 5 * 60_000L) max = Math.max(max, o.optLong("ts"));   // a wrong clock far in the future must never freeze the cursor
             if (AlertMerge.localOnly(o.optString("type"))) continue;
             fresh.add(o);
         }
         int visible = 0;
         for (JSONObject o : fresh) if (!Alerts.isOff(c, o.optString("type"))) visible++;
-        boolean each = visible <= 5;
+        boolean each = !backfill && visible <= 5;
         int added = 0;
         for (JSONObject o : fresh)
             if (Alerts.addFromSheet(c, o.optString("type"), o.optString("level", "info"), o.optString("text"), o.optLong("ts"), each)) added++;
-        if (!each && added > 0) Alerts.show(c, visible + " alerts from home. Open FARRUSCO-Q CHARGE to see them.", "info");
+        if (!backfill && !each && added > 0) Alerts.show(c, visible + " alerts from home. Open FARRUSCO-Q CHARGE to see them.", "info");
+        if (backfill) { if (max <= 0) max = nowMs; Store.putLong(c, "alertsBackfillC", 1); }
         Store.putLong(c, "alertsSince", max);
     }
 

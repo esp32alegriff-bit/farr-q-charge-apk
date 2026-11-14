@@ -13,7 +13,7 @@ android {
         minSdk = 26
         targetSdk = 34
         versionCode = 46
-        versionName = "Ver_FarrQ_2.2.8.5_B"
+        versionName = "Ver_FarrQ_2.2.8.5_C"
     }
 
     compileOptions {

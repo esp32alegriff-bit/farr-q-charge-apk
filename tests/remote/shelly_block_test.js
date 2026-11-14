@@ -20,7 +20,7 @@ const {chromium}=require(process.env.PW_MODULE||'playwright');
    {start_ms:T(8,10,0),end_ms:T(8,11,0),kwh:2.0,cost:7.76,peak_w:2800},       // 6 went on again 5 min later: a pause
    {start_ms:T(8,11,5),end_ms:T(8,12,0),kwh:2.0,cost:7.76,peak_w:2800},       // 7 the relay's own log has an OFF at the stop
    {start_ms:T(9,15,0),end_ms:T(9,16,0),kwh:2.5,cost:9.7,peak_w:2800},        // 8 85% typed after it, same odometer: not completed
-   {start_ms:T(10,6,0),end_ms:T(10,9,0),kwh:7.0,cost:27.16,peak_w:2800}       // 9 the relay copy shows both relays ON since before the start: full
+   {start_ms:T(10,6,0),end_ms:T(10,9,0),kwh:7.0,cost:27.16,peak_w:2800,duration_s:10800}       // 9 the relay copy shows both relays ON since before the start: full
   ];
   const A=[
    {ts:T(3,20,1),type:'charge_not_full',level:'info',text:'Charge ended before full, 3.00 kWh. A relay was switched off while the car was charging.'},
@@ -84,8 +84,12 @@ const {chromium}=require(process.env.PW_MODULE||'playwright');
  await pg.fill('#shOdo','2300');await pg.click('#shellyCard button.btn:not(.ghost)');await pg.waitForTimeout(200);
  const c2=await pg.evaluate(()=>{const r=window.farrShelly.calc();return {base:r.base,odo:r.odo,st:JSON.parse(localStorage.getItem('farrq.shelly'))};});
  ok(c2.base.how==='typed'&&c2.odo===2300&&c2.st.src==='typed'&&c2.st.odo===2300,'typed odometer becomes the new counting point, stored in the same form as 2.2.8.5');
+ await pg.fill('#shOdo','2310');await pg.click('#shellyCard button.btn:not(.ghost)');await pg.waitForTimeout(200);
+ ok(await pg.evaluate(()=>JSON.parse(localStorage.getItem('farrq.shellyTyped')||'[]').length)===2,'every typed odometer is kept, not only the latest');
+ const cr=await pg.evaluate(()=>{const r=farr22.reportData(0).calc.find(c=>c.s.start_ms===new Date(2026,10,10,6,0,0).getTime());return r?{st:r.status,after:r.after}:null;});
+ ok(cr&&cr.st==='calc'&&cr.after===100,'a full charge with no log gets a worked-out battery % ('+JSON.stringify(cr)+')');
  await pg.evaluate(()=>window.farrShellyReset());await pg.waitForTimeout(200);
- ok(await pg.evaluate(()=>localStorage.getItem('farrq.shelly')===null),'the typed odometer can be forgotten');
+ ok(await pg.evaluate(()=>localStorage.getItem('farrq.shelly')===null&&localStorage.getItem('farrq.shellyTyped')===null),'the typed odometers can be forgotten');
  ok(await pg.evaluate(()=>{const o=JSON.parse(localStorage.getItem('farrq.verdicts')||'{}');return Object.values(o).some(v=>v.k==='full')}),'verdicts that came from the relay copy or an alert are kept on this phone');
  ok(errs.length===0,'no page errors '+errs.join('|'));
  await b.close();console.log(fail?'FAILED '+fail:'ALL PASSED');process.exit(fail?1:0);

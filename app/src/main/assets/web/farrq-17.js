@@ -5,7 +5,7 @@
 (function(){
 'use strict';
 const N=window.FarrNative||null;
-window.FARR_VER='Ver_FarrQ_2.2.8.5_B';
+window.FARR_VER='Ver_FarrQ_2.2.8.5_C';
 window.FARR_APP_URL='https://github.com/esp32alegriff-bit/farr-q-charge-apk/releases/latest';
 
 /* ---------- bridge ---------- */
@@ -423,7 +423,15 @@ function vdKeep(en,v){
     const ks=Object.keys(o).sort((a,b)=>+a-+b);while(ks.length>400)delete o[ks.shift()];localStorage.setItem(VD_KEY,JSON.stringify(o));}catch(e){}
   return v;
 }
-function shEntries(){return (typeof E!=='undefined'&&E&&E.length?E:[]).filter(e=>e&&e.ts>0&&!e.auto).slice().sort((a,b)=>a.ts-b.ts);}
+/* 2.2.8.5_C: every odometer typed in the Odometer check box is kept and counts as a real reading (before: only the latest one was kept) */
+const SH_HIST='farrq.shellyTyped';
+function shTypedAll(){try{const a=JSON.parse(localStorage.getItem(SH_HIST)||'[]');return Array.isArray(a)?a.filter(x=>x&&+x.ts>0&&+x.odo>0):[];}catch(e){return [];}}
+function shTypedAdd(odo,at){try{const a=shTypedAll().filter(x=>+x.ts!==+at);a.push({ts:+at,odo:+odo});localStorage.setItem(SH_HIST,JSON.stringify(a.slice(-60)));}catch(e){}}
+function shEntries(){
+  const base=(typeof E!=='undefined'&&E&&E.length?E:[]).filter(e=>e&&e.ts>0&&!e.auto);
+  const typed=shTypedAll().map(x=>({ts:+x.ts,kind:'typed',odo:+x.odo,pct:null,where:'',who:'typed in the box'}));
+  return base.concat(typed).sort((a,b)=>a.ts-b.ts);
+}
 function shSessions(){
   return (typeof MS!=='undefined'&&MS.length?MS:[]).filter(s=>+s.end_ms>0&&+s.kwh>0).map(s=>({st:+s.start_ms||+s.end_ms,en:+s.end_ms,kwh:+s.kwh,cost:(s.cost!=null&&s.cost!==''&&isFinite(+s.cost))?+s.cost:(+s.kwh)*rate(),peak:+s.peak_w||0,reason:s.end_reason||s.why||'',raw:s})).sort((a,b)=>a.st-b.st);
 }
@@ -511,6 +519,8 @@ function shOdoAt(x,ent,anchor){
   if(b&&b.ts>=(x.chain||x.st)-30*60000)return +b.odo;                       // read just before it was plugged in
   const a=ent.find(e=>e.ts>=x.en-3*60000&&(x.next==null||e.ts<x.next)&&e.odo>0);
   if(a&&b&&a.where!=='Station'&&+a.odo===+b.odo)return +a.odo;                // same odometer before and after: the car did not move
+  const ty=ent.find(e=>e.kind==='typed'&&e.ts>=x.en&&(x.next==null||e.ts<x.next)&&e.ts-x.en<=24*3600000);
+  if(ty)return +ty.odo;                                                       // 2.2.8.5_C: typed in the box right after this full charge
   if(anchor&&anchor.src==='typed'&&anchor.at>=x.en&&(x.next==null||anchor.at<x.next)&&anchor.at-x.en<=24*3600000)return +anchor.odo;
   return null;
 }
@@ -634,10 +644,10 @@ function paintShelly(force){
 window.farrShellySet=function(){
   const i=document.getElementById('shOdo');const v=i?parseFloat(i.value):NaN;
   if(isNaN(v)||v<=0)return say('Type your odometer in km first.');
-  shSet({odo:v,at:Date.now(),startPct:null,src:'typed'});
+  const nowT=Date.now();shSet({odo:v,at:nowT,startPct:null,src:'typed'});shTypedAdd(v,nowT);
   if(i)i.value='';paintShelly(true);say('Odometer check saved');
 };
-window.farrShellyReset=function(){try{localStorage.removeItem(SH_KEY);}catch(e){}paintShelly(true);say('Typed odometer forgotten');};
+window.farrShellyReset=function(){try{localStorage.removeItem(SH_KEY);localStorage.removeItem(SH_HIST);}catch(e){}paintShelly(true);say('Typed odometer forgotten');};
 window.farrShelly={calc:shCalc,html:shellyHTML,paint:paintShelly};
 function paintHomeCard(){
   try{paintShelly();}catch(e){}

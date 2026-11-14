@@ -430,7 +430,12 @@ function calcAll(){
     const real=src.find(e=>e.kind==='charge'&&!e.auto&&e.ts>=s.start_ms-60000&&e.ts<=Math.min(nextStart,s.end_ms+24*3600000));
     if(real){rec.status='real';rec.after=real.pct;rec.before=real.pct-added;rec.method='your Charge log';out.push(rec);return;}
     const r1=src.find(e=>e.ts>=s.end_ms-180000&&e.ts<nextStart&&e.kind==='trip');
-    if(!r1){out.push(rec);return;}
+    if(!r1){
+      /* 2.2.8.5_C: a charge the Shelly says ended full is 100% at its end, so the before % can be worked out without a log */
+      let fv=false;try{fv=!!(window.farrVerdict&&window.farrVerdict(s)==='full');}catch(x){}
+      if(fv){rec.after=100;rec.before=100-added;rec.method='the car stopped by itself (Shelly)';rec.gapH=0;rec.quality='good';rec.status=(rec.before<-3||rec.before>100)?'check':'calc';}
+      out.push(rec);return;
+    }
     const r0=[...src].reverse().find(e=>e.ts<=s.start_ms+180000&&e.ts<r1.ts);
     rec.r1=r1;rec.r0=r0||null;rec.after=r1.pct;rec.before=r1.pct-added;rec.method='next Anytime log';
     rec.gapH=(r1.ts-s.end_ms)/3600000;
@@ -509,7 +514,7 @@ function sheetExtra(){
     const b=rec&&rec.before!=null?Math.round(rec.before*10)/10:'', a=rec&&rec.after!=null?Math.round(rec.after*10)/10:'';
     return {start:x.start_ms,end:x.end_ms,min:Math.round(x.duration_s/60),wall:+(+x.kwh).toFixed(3),batt:+batt.toFixed(3),cost:+(x.kwh*rate()).toFixed(2),
       peakW:Math.round(x.peak_w||0),avgW:Math.round(x.avg_w||0),avgA,peakA,why:x.end_reason||'',before:b,after:a,
-      src:rec?(rec.status==='real'?'Charge log':rec.status==='calc'?'Calculated ('+rec.quality+')':rec.status==='check'?'Check readings':'Not recorded yet'):'',
+      src:rec?(rec.status==='real'?'Charge log':rec.status==='calc'?'Calculated ('+rec.quality+')':rec.status==='check'?'Check readings':'Waiting for your next log'):'',
       lossK:+(x.kwh-batt).toFixed(3),lossR:+((x.kwh-batt)*rate()).toFixed(2),rate:rate()};
   });
   const calcRows=calc.filter(c=>!(c.s&&c.s.from_sheet)).map(c=>({start:c.s.start_ms,end:c.s.end_ms,wall:+(+c.s.kwh).toFixed(3),added:+c.added.toFixed(1),
