@@ -27,10 +27,10 @@ const {chromium}=require(process.env.PW_MODULE||'playwright');
  await pg.waitForTimeout(1200);
 
  // nothing synced yet: the block adds nothing and does not break
- let t0=await pg.evaluate(()=>{try{return typeof farrRemoteExtraRows==='function'?farrRemoteExtraRows().replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim():'NOFUNC';}catch(e){return 'ERR '+e.message;}});
+ let t0=await pg.evaluate(()=>{try{return typeof farrShelly==='object'?farrShelly.html().replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim():'NOFUNC';}catch(e){return 'ERR '+e.message;}});
  ok(t0!=='NOFUNC'&&!t0.startsWith('ERR'),'helper exists and runs');
- ok(t0.includes('Last battery % logged')&&t0.includes('40%'),'before any sync it shows this phone\'s own last reading (40%)');
- ok(!t0.includes('Last charge'),'no finished charge yet: no charge rows');
+ ok(/Battery % typed in last\s*40%/.test(t0),'before any sync it shows this phone\'s own last reading (40%)');
+ ok((await pg.evaluate(()=>farrRemoteBlockHTML()))==='','nothing copied from the Sheet yet: no block');
 
  // the Sheet answers with Estelle's newer Anytime log and one finished charge
  const B={start_ms:now-5*H,end_ms:now-3*H,kwh:8.25,minutes:120,peak_w:2810,end_reason:'below_threshold',cost:32.01,tariff:3.88};
@@ -44,13 +44,14 @@ const {chromium}=require(process.env.PW_MODULE||'playwright');
  await pg.evaluate(()=>farrRemoteSend());await pg.waitForTimeout(800);
  const html=await pg.evaluate(()=>farrRemoteBlockHTML());
  const txt=html.replace(/<[^>]*>/g,' ').replace(/\s+/g,' ');
- ok(html.includes('EV meter · copied from the Sheet'),'the block is still there');
- ok(/Last battery % logged\s*87%\s*·\s*Estelle the Wife/.test(txt),'last battery % 87% and who logged it');
- ok(/Car said\s*346 km/.test(txt),'car said 346 km');
- ok(/Odometer\s*1100 km/.test(txt),'odometer 1100 km');
- ok(/Last charge\s*8\.25 kWh · 120 min · R32\.01/.test(txt),'last finished charge: 8.25 kWh, 120 min, R32.01');
- ok(txt.includes('Last charge ended'),'last charge end time shown');
- ok(txt.includes('Charging then')&&txt.includes('Day total then')&&txt.includes('Month total then'),'old rows unchanged');
+ const det=(await pg.evaluate(()=>window.farrShelly.html())).replace(/<[^>]*>/g,' ').replace(/\s+/g,' ');
+ ok(html.includes('Copy from the Sheet'),'the block is still there');
+ ok(/Battery % typed in last\s*87%\s*·\s*Estelle the Wife/.test(det),'last battery % 87% and who logged it (under Details)');
+ ok(/Range the car screen showed\s*346 km/.test(det),'the range the car screen showed: 346 km (under Details)');
+ ok(/Odometer\s*1100 km/.test(det),'odometer 1100 km (under Details)');
+ ok(/Used\s*8\.25 kWh · R32\.01/.test(txt),'last finished charge: 8.25 kWh, R32.01');
+ ok(/When\s/.test(txt)&&/How it ended/.test(txt),'last charge time and how it ended shown');
+ ok(txt.includes('Charging?')&&txt.includes('Used today')&&!/\bthen\b/i.test(txt),'day rows are in plain words, no "then"');
 
  // an older local entry gets its name from the Sheet, nothing else changes
  const who=await pg.evaluate(()=>JSON.parse(localStorage.getItem('farrq.entries')||'[]').map(e=>({ts:e.ts,pct:e.pct,who:e.who})));
@@ -68,7 +69,8 @@ const {chromium}=require(process.env.PW_MODULE||'playwright');
  await pg.evaluate(({now,H})=>{window.__readings=[{ts:now-1*H,kind:'trip',odo:1110,pct:85,where:'',carKm:340}];},{now,H});
  await pg.evaluate(()=>farrRemoteSend());await pg.waitForTimeout(800);
  const t2=(await pg.evaluate(()=>farrRemoteBlockHTML())).replace(/<[^>]*>/g,' ').replace(/\s+/g,' ');
- ok(/Last battery % logged\s*85%\s/.test(t2)&&!/85%\s*·/.test(t2),'no phone name: shows 85% with no name, no error');
+ const d2=(await pg.evaluate(()=>window.farrShelly.html())).replace(/<[^>]*>/g,' ').replace(/\s+/g,' ');
+ ok(/Battery % typed in last\s*85%\s*·\s*\d/.test(d2)&&!/undefined/.test(d2),'no phone name: shows 85% with no name, no error');
 
  // 2.2.7: estimated battery % = last logged % + energy delivered since, same maths as the Home "Live charge estimate"
  const est=await pg.evaluate(async({now,H})=>{
@@ -81,7 +83,7 @@ const {chromium}=require(process.env.PW_MODULE||'playwright');
   window.__meter={sessions:[A],live:{updated_ms:now-30000,charging:true,watts:2600,today_kwh:todayDone+2.2,month_kwh:80,total_kwh:900}};
   window.__store.length=0;   // only this scenario's charge is on the phone
   await farrRemoteSend();await new Promise(r=>setTimeout(r,800));
-  out.html=farrRemoteBlockHTML();
+  out.html=farrRemoteBlockHTML();out.det=window.farrShelly.html();
   // same data, but not charging: only the finished charge counts
   window.__meter={sessions:[A],live:{updated_ms:now-30000,charging:false,watts:0,today_kwh:todayDone,month_kwh:80,total_kwh:900}};
   await farrRemoteSend();await new Promise(r=>setTimeout(r,800));
@@ -98,16 +100,16 @@ const {chromium}=require(process.env.PW_MODULE||'playwright');
  const dp=since=>Math.min(100,50+since*0.9/42.7*100);
  const dmin=(p,w)=>Math.round((100-p)/100*42.7/(w/1000*0.9)*60);
  const fmt=m=>m>=60?Math.floor(m/60)+' h '+(m%60)+' min':m+' min';
- const m1=tx(est.html).match(/Battery then \(estimated\)\s*≈\s*(\d+)%/);
+ const m1=tx(est.html).match(/Battery \(about\)\s*about\s*(\d+)%/);
  ok(m1&&+m1[1]===Math.floor(dp(7.7)),'charging: finished 5.5 kWh + running 2.2 kWh = 7.7 kWh, display maths ('+(m1?m1[1]:'none')+'% expected '+Math.floor(dp(7.7))+'%)');
  ok(!m1||+m1[1]!==Math.floor(dp(13.2)),'the running part is not counted twice');
- const t1=tx(est.html).match(/Time left then \(estimated\)\s*([^A-Z]*?)\s*(Last battery|$)/);
+ const t1=tx(est.html).match(/Time left \(about\)\s*([^A-Z]*?)\s*(Full at|$)/);
  ok(t1&&t1[1].trim()===fmt(dmin(dp(7.7),2600)),'time left at 2600 W, display maths ('+(t1?t1[1].trim():'none')+' expected '+fmt(dmin(dp(7.7),2600))+')');
- const m2=tx(est.html2).match(/Battery then \(estimated\)\s*≈\s*(\d+)%/);
+ const m2=tx(est.html2).match(/Battery \(about\)\s*about\s*(\d+)%/);
  ok(m2&&+m2[1]===Math.floor(dp(5.5)),'not charging: only the finished 5.5 kWh counted ('+(m2?m2[1]:'none')+'%)');
- ok(!/Time left then/.test(tx(est.html2)),'not charging: no time left row');
- ok(!/Battery then \(estimated\)/.test(tx(est.html3)),'nothing delivered since the last log: no estimate row');
- ok(/Last battery % logged\s*50%/.test(tx(est.html)),'the real logged % is still shown beside the estimate');
+ ok(!/Time left \(about\)/.test(tx(est.html2)),'not charging: no time left row');
+ ok(!/Battery \(about\)\s*about/.test(tx(est.html3)),'nothing delivered since the last log: no estimate row');
+ ok(/Battery % typed in last\s*50%/.test(tx(est.det)),'the real logged % is still shown beside the estimate');
  const sent2=await pg.evaluate(()=>JSON.stringify(window.__calls.map(c=>c.a)));
  ok(!/Battery then|Time left then|battery_then/i.test(sent2),'the estimate is never sent to the Sheet');
 

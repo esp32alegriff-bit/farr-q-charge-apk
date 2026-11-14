@@ -91,8 +91,8 @@ const {chromium}=require(process.env.PW_MODULE||'playwright');
  await pg.evaluate(()=>{go('hist');});await pg.waitForTimeout(300);
  await pg.evaluate(()=>{go('home');});await pg.waitForTimeout(3500);
  const card=await pg.evaluate(()=>document.getElementById('meterCard').innerText);
- ok(/copied from the sheet/i.test(card)&&card.includes('13.75')&&card.includes('99.50'),'Home card shows day and month totals from the Sheet');
- ok(!/live|now/i.test(card.replace(/EV meter/i,''))||card.includes('Last copied'),'card is labelled as a copy, with the time');
+ ok(/copy from the sheet/i.test(card)&&card.includes('13.75')&&card.includes('Used so far'),'Home card shows the day total from the Sheet and the month so far');
+ ok(!/live|now/i.test(card.replace(/EV meter/i,''))||card.includes('as it was on'),'card is labelled as a copy, with the time');
  // Efficiency / History screens render without errors
  await pg.evaluate(()=>{go('hist');});await pg.waitForTimeout(300);
  await pg.evaluate(()=>{go('graph');});await pg.waitForTimeout(300);

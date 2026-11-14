@@ -37,20 +37,22 @@ const {chromium}=require(process.env.PW_MODULE||'playwright');
  ok(a.pauses===1,'one pause counted (5 min gap): '+a.pauses);
  ok(a.running===2,'running charge counted: '+a.running);
  const t=await pg.evaluate(()=>window.farrRemoteBlockHTML().replace(/<[^>]*>/g,' ').replace(/\s+/g,' '));
- for(const g of ['A · Today','B · This month','C · Last finished charge','D · Car use this month','E · Settings and health'])ok(t.includes(g),'group shown: '+g);
- for(const l of ['Charging for (about)','Started at (about)','This charge so far','Full at (about)','Charges today',
-   'Month cost so far','measured by meter','estimated from battery %','Average per day','Month bill, if it carries on (a guess)','Meter sessions this month','Meter total, ever',
-   'Last charge','Started and ended','Pauses this month (under 10 min)','Km this month','kWh per 100 km','Cost per km','Km since last charge',
-   'Home rate (app setting)','Charging loss (app setting)','Home phone last sent','Odometer'])ok(t.includes(l),'item shown: '+l);
+ for(const g of ['Today','This month','Last charge','The car this month'])ok(t.includes(g),'group shown: '+g);
+ for(const l of ['Charging?','Charging for (about)','Started at (about)','This charge so far','Charges today','Used today',
+   'When','Used','Used so far','Guessed from battery %','Charges','Each day, on average','Guess for the whole month',
+   'Km driven','Km driven since the last charge','Power bought per 100 km (wall)','Cost per km (wall)'])ok(t.includes(l),'item shown: '+l);
  ok(/Charging for \(about\)\s*\d+ min|Charging for \(about\)\s*\d+ h/.test(t),'charging-for has a value: '+t.slice(t.indexOf('Charging for'),t.indexOf('Charging for')+60));
  ok(/This charge so far\s*2\.00 kWh · R7\.76/.test(t),'this charge so far 2.00 kWh R7.76');
- ok(/Pauses this month \(under 10 min\)\s*1/.test(t),'pauses row = 1');
- ok(/Home rate \(app setting\)\s*R3\.88/.test(t),'rate shown');
- ok(t.includes('Month total then')&&t.includes('Day total then')&&t.includes('Last battery % logged'),'old rows still there');
+ ok(!/\bthen\b/i.test(t)&&t.includes('Copy from the Sheet'),'the word "then" is gone from the Home block');
+ ok(!/Odometer|Home rate|Meter total|Pauses/.test(t),'odometer, settings, meter total and pauses are not on the Home block');
+ const det=await pg.evaluate(()=>window.farrShelly.html().replace(/<[^>]*>/g,' ').replace(/\s+/g,' '));
+ ok(/Short pauses in a charge, this month\s*1/.test(det),'pauses row = 1 (under Details)');
+ ok(/Price per kWh \(setting\)\s*R3\.88/.test(det),'rate shown (under Details)');
+ ok(det.includes('Meter total, ever')&&det.includes('Home phone last sent')&&det.includes('Odometer'),'meter total, phone last sent and odometer are under Details');
  ok(!/Home charging this month/.test(t),'old wrong row removed');
  // not charging: items that need a running charge show --
  const t2=await pg.evaluate(()=>{const r=JSON.parse(localStorage.getItem('farrq.remoteLive'));r.charging=false;r.watts=0;localStorage.setItem('farrq.remoteLive',JSON.stringify(r));return window.farrRemoteBlockHTML().replace(/<[^>]*>/g,' ').replace(/\s+/g,' ');});
- ok(/Charging for \(about\)\s*--/.test(t2)&&/This charge so far\s*--/.test(t2),'not charging: running items show --');
+ ok(/Charging\?\s*no/.test(t2)&&!/Charging for|This charge so far/.test(t2),'not charging: the running-charge rows are left out');
  ok(errs.length===0,'no page errors '+errs.join('|'));
  await b.close();process.exit(fail?1:0);
 })();

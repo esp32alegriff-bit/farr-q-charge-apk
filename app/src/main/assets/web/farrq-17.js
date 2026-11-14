@@ -5,7 +5,7 @@
 (function(){
 'use strict';
 const N=window.FarrNative||null;
-window.FARR_VER='Ver_FarrQ_2.2.8.5_A';
+window.FARR_VER='Ver_FarrQ_2.2.8.5_B';
 window.FARR_APP_URL='https://github.com/esp32alegriff-bit/farr-q-charge-apk/releases/latest';
 
 /* ---------- bridge ---------- */
@@ -268,6 +268,7 @@ const hmRand=v=>'R'+n2(v,2);
 function hmHead(t,sub){return `<div class="label" style="margin:16px 0 4px;padding-top:10px;border-top:2px solid var(--line,#8884)">${esc(t)}</div>`+(sub?`<div class="small" style="margin:0 0 4px">${esc(sub)}</div>`:'');}
 /* 2.2.8.3: the five groups under the EV meter block. Everything is worked out on this phone from the block, the log and the meter sessions already copied. Nothing is sent. */
 function homeSummaryGroups(r){
+  /* 2.2.8.5_B: plain words, each fact once, no "then". Odometer, settings and checks are under Details. */
   const NA='--';let h='';
   const now=Date.now(), dNow=new Date(r.at||now), rt=rate();
   const dayMs=new Date(dNow.getFullYear(),dNow.getMonth(),dNow.getDate()).getTime();
@@ -275,54 +276,85 @@ function homeSummaryGroups(r){
   const last=(typeof E!=='undefined'&&E.length?E:[]).reduce((a,b)=>!a||b.ts>a.ts?b:a,null);
   const est=remoteEstCalc(r,last);
   const todayDone=monthSessions(dayMs).filter(x=>x.en<=r.at+60000);
-  /* A: today */
-  h+=hmHead('A · Today','Worked out as of the Last copied time.');
+  let kmS=null;try{kmS=kmSinceCharge();}catch(e){}
+  /* TODAY */
+  h+=hmHead('Today');
+  h+=R('Charging?',r.charging?'yes':'no');
   if(r.charging&&run>0&&watts>=500){
     let stA=0;
     try{
       const lastEnd=(typeof MS!=='undefined'&&MS.length?MS:[]).reduce((t,x)=>+x.end_ms<=r.at+60000&&+x.end_ms>t?+x.end_ms:t,0);
       ((sync('alerts')||{}).alerts||[]).forEach(a=>{if(a.type==='session_start'&&!a.demo&&+a.ts<=r.at+60000&&+a.ts>=lastEnd&&+a.ts>r.at-24*3600000&&+a.ts>stA)stA=+a.ts;});
     }catch(e){}
-    if(stA>0){h+=R('Charging for',hmDur((r.at-stA)/60000))+R('Started at',hmClock(stA));}
-    else{const mins=run/(watts/1000)*60;h+=R('Charging for (about)',hmDur(mins))+R('Started at (about)',hmClock(r.at-mins*60000));}
-  }else{h+=R('Charging for (about)',NA)+R('Started at (about)',NA);}
-  h+=R('This charge so far',r.charging&&run>0?n2(run,2)+' kWh · '+hmRand(run*rt):NA);
-  h+=R('Full at (about)',est&&est.min!=null?(est.p>=100?'Full':hmClock(r.at+est.min*60000)):NA);
+    h+=R('Power',n2(watts,0)+' W');
+    if(stA>0){h+=R('Started at',hmClock(stA))+R('Charging for',hmDur((r.at-stA)/60000));}
+    else{const mins=run/(watts/1000)*60;h+=R('Started at (about)',hmClock(r.at-mins*60000))+R('Charging for (about)',hmDur(mins));}
+    h+=R('This charge so far',n2(run,2)+' kWh · '+hmRand(run*rt));
+    if(est&&est.min!=null){h+=R('Time left (about)',est.p>=100?'Full':(est.min>=60?Math.floor(est.min/60)+' h '+(est.min%60)+' min':est.min+' min'));h+=R('Full at (about)',est.p>=100?'Full':hmClock(r.at+est.min*60000));}
+  }
+  /* one battery row */
+  let bat=null,batLab='Battery (about)';
+  try{
+    const fs=last&&last.pct!=null?shVerdicts().filter(x=>x.kwh>=0.1&&x.en>last.ts&&x.en<=r.at+60000).pop():null;
+    if(fs&&fs.v.k==='full'&&!r.charging){bat='100% · full at '+hmClock(fs.en);if(kmS&&kmS.km>0)batLab='Battery at the last full charge';}
+    else if(est)bat='about '+Math.floor(est.p)+'%';
+    else if(last&&last.pct!=null&&!isNaN(last.pct))bat=n2(last.pct,0)+'% · typed in on '+esc(shDT(last.ts));
+  }catch(e){}
+  h+=R(batLab,bat||NA);
   h+=R('Charges today',String(todayDone.length+(r.charging&&run>0?1:0)));
-  /* B: this month */
+  h+=R('Used today',n2(r.today,2)+' kWh · '+hmRand((+r.today||0)*rt));
+  /* LAST CHARGE */
+  const ss=monthSessions(0).filter(x=>x.en<=r.at+60000);const lc=ss.length?ss.reduce((a,b)=>b.en>a.en?b:a):null;
+  h+=hmHead('Last charge');
+  if(lc){
+    h+=R('When',esc(shRange(lc.st,lc.en)));
+    h+=R('Used',n2(lc.kwh,2)+' kWh · '+hmRand(lc.cost));
+    try{const vv=shVerdicts().filter(x=>Math.abs(x.en-lc.en)<=120000).pop();if(vv)h+=R('How it ended',shTag(vv.v));}catch(e){}
+  }else h+=R('Last charge',NA);
+  /* THIS MONTH */
   const m=homeMonthStats(r.at||now,r);
   const dom=Math.max(1,dNow.getDate()), dim=new Date(dNow.getFullYear(),dNow.getMonth()+1,0).getDate();
-  h+=hmHead('B · This month','By when the energy was charged. Home only, Station left out.');
-  h+=R('Month cost so far',n2(m.kwh,2)+' kWh · '+hmRand(m.cost));
-  h+=R('· measured by meter',n2(m.mKwh,2)+' kWh · '+hmRand(m.mCost));
-  h+=R('· estimated from battery %',n2(m.eKwh,2)+' kWh · '+hmRand(m.eCost));
-  h+=R('Average per day',n2(m.kwh/dom,2)+' kWh · '+hmRand(m.cost/dom));
-  h+=R('Month bill, if it carries on (a guess)',hmRand(m.cost/dom*dim));
-  h+=R('Meter sessions this month',String(m.sessions));
-  h+=R('Meter total, ever',r.total!=null&&!isNaN(+r.total)?n2(r.total,1)+' kWh':NA);
-  /* C: last finished charge */
-  const ss=monthSessions(0).filter(x=>x.en<=r.at+60000);const lc=ss.length?ss.reduce((a,b)=>b.en>a.en?b:a):null;
-  h+=hmHead('C · Last finished charge');
-  h+=R('Last charge',lc?n2(lc.kwh,2)+' kWh · '+hmRand(lc.cost):NA);
-  h+=R('Started and ended',lc?hmClock(lc.st)+' to '+hmClock(lc.en)+(new Date(lc.en).toDateString()!==new Date(lc.st).toDateString()||new Date(lc.en).toDateString()!==dNow.toDateString()?' ('+new Date(lc.en).toLocaleDateString('en-ZA',{day:'numeric',month:'short'})+')':''):NA);
-  h+=R('Pauses this month (under 10 min)',String(m.pauses));
-  /* D: car use this month */
+  h+=hmHead('This month');
+  /* no meter sessions on this phone yet: use the month total the Sheet block sent */
+  const mK=(m.sessions===0&&+r.month>0)?+r.month:m.kwh, mC=(m.sessions===0&&+r.month>0)?+r.month*rt:m.cost;
+  h+=R('Used so far',n2(mK,2)+' kWh · '+hmRand(mC));
+  if(m.eKwh>=0.005)h+=R('Guessed from battery %',n2(m.eKwh,2)+' kWh · '+hmRand(m.eCost));
+  h+=R('Charges',String(m.sessions));
+  h+=R('Each day, on average',n2(mK/dom,2)+' kWh · '+hmRand(mC/dom));
+  h+=R('Guess for the whole month',hmRand(mC/dom*dim));
+  /* THE CAR */
   const rowsM=derive().filter(x=>x.ts>=m.from), sm=summ(rowsM);
-  h+=hmHead('D · Car use this month');
-  h+=R('Km this month',sm.km>0?n2(sm.km,0)+' km':NA);
-  h+=R('kWh per 100 km (battery, from trips)',sm.eff!=null?n2(sm.eff,1):NA);
+  h+=hmHead('The car this month');
+  h+=R('Km driven',sm.km>0?n2(sm.km,0)+' km':NA);
+  h+=R('Km driven since the last charge',kmS?n2(kmS.km,0)+' km':NA);
   let wl=null;try{wl=shEff();}catch(e){}
-  h+=R('kWh per 100 km (at the wall, Shelly)',wl?n2(wl.v,1)+(wl.n?'':' · start value'):NA);
-  h+=R('Cost per km (at the wall)',wl?hmRand(wl.v/100*rt):NA);
-  h+=R('Km since last charge',(function(){try{const k=kmSinceCharge();return k?n2(k.km,0)+' km':NA;}catch(e){return NA;}})());
-  /* E: settings and health */
-  const odo=(typeof E!=='undefined'&&E.length?E:[]).filter(e=>e.odo>0).reduce((a,b)=>!a||b.ts>a.ts?b:a,null);
-  const ageMin=(now-r.at)/60000;
-  h+=hmHead('E · Settings and health');
-  h+=R('Home rate (app setting)','R'+n2(rt,2)+' per kWh');
-  h+=R('Charging loss (app setting)',n2(S.loss,0)+'%');
-  h+=R('Home phone last sent',esc(ago(r.at))+' · '+(ageMin<=45?'recent':'old'));
-  h+=R('Odometer',odo?n2(odo.odo,0)+' km':NA);
+  h+=R('Power bought per 100 km (wall)',wl?n2(wl.v,1)+' kWh'+(wl.n?'':' · a starting guess'):NA);
+  h+=R('Cost per km (wall)',wl?hmRand(wl.v/100*rt):NA);
+  return h;
+}
+/* 2.2.8.5_B: the numbers that used to crowd Home. Shown under Details only. */
+function homeMoreRows(){
+  let h='';
+  try{
+    const r=JSON.parse(localStorage.getItem('farrq.remoteLive')||'null');
+    const rt=rate();
+    const last=(typeof E!=='undefined'&&E.length?E:[]).reduce((a,b)=>!a||b.ts>a.ts?b:a,null);
+    h+=shHead('Other numbers');
+    if(last&&last.pct!=null&&!isNaN(last.pct))h+=R('Battery % typed in last',n2(last.pct,0)+'%'+(last.who?' · '+esc(last.who):'')+' · '+esc(shDT(last.ts)));
+    if(last&&last.carKm!=null&&!isNaN(last.carKm))h+=R('Range the car screen showed',n2(last.carKm,0)+' km');
+    const from=new Date(new Date().getFullYear(),new Date().getMonth(),1).getTime();
+    const sm=summ(derive().filter(x=>x.ts>=from));
+    h+=R('Power used per 100 km (battery)',sm.eff!=null?n2(sm.eff,1)+' kWh':'--');
+    if(r&&r.at>0){
+      const m=homeMonthStats(r.at,r);
+      h+=R('Short pauses in a charge, this month',String(m.pauses));
+      h+=R('Meter total, ever',r.total!=null&&!isNaN(+r.total)?n2(r.total,1)+' kWh':'--');
+      const ageMin=(Date.now()-r.at)/60000;
+      h+=R('Home phone last sent',esc(ago(r.at))+' · '+(ageMin<=45?'recent':'old'));
+    }
+    h+=R('Price per kWh (setting)','R'+n2(rt,2));
+    h+=R('Power lost while charging (setting)',n2(S.loss,0)+'%');
+  }catch(e){}
   return h;
 }
 function homeMonthRows(){return '';}   /* 2.2.8.3: replaced by the B group (kept so older tests find the name) */
@@ -343,44 +375,14 @@ function kmSinceChargeRow(){
   try{const k=kmSinceCharge();return k?R('Km since last charge',n2(k.km,0)+' km'):'';}catch(e){return '';}
 }
 window.farrKmSinceCharge=kmSinceCharge;
-function remoteExtraRows(r){
-  let h='';
-  try{
-    const last=(typeof E!=='undefined'&&E.length?E:[]).reduce((a,b)=>!a||b.ts>a.ts?b:a,null);
-    if(last&&last.pct!=null&&!isNaN(last.pct)){
-      h+=remoteEstRow(r,last);
-      h+=R('Last battery % logged',n2(last.pct,0)+'%'+(last.who?' · '+esc(last.who):''))+
-         R('Logged',esc(tstamp(last.ts)))+
-         (last.carKm!=null&&!isNaN(last.carKm)?R('Car said',n2(last.carKm,0)+' km'):'')+
-         (last.odo>0?R('Odometer',n2(last.odo,0)+' km'):'')+kmSinceChargeRow(last);
-      try{
-        const fs=shVerdicts().filter(x=>x.kwh>=0.1&&x.en>last.ts&&x.en<=r.at+60000).pop();
-        if(fs&&fs.v.k==='full'&&!r.charging)h+=R('Battery after the last charge','100% · full at '+esc(hmClock(fs.en)));
-      }catch(e){}
-    }
-  }catch(e){}
-  try{
-    const m=(typeof MS!=='undefined'&&MS.length?MS:[]).reduce((a,b)=>+b.end_ms>0&&(!a||+b.end_ms>+a.end_ms)?b:a,null);
-    if(m&&+m.end_ms>0&&+m.kwh>0){
-      const mins=Math.round((+m.end_ms-(+m.start_ms||+m.end_ms))/60000);
-      const cost=(m.cost!=null&&m.cost!==''&&isFinite(+m.cost))?+m.cost:(+m.kwh)*rate();
-      h+=R('Last charge ended',esc(tstamp(+m.end_ms)))+R('Last charge',n2(m.kwh,2)+' kWh · '+mins+' min · R'+n2(cost,2));
-    }
-  }catch(e){}
-  return h;
-}
+function remoteExtraRows(r){return '';}   /* 2.2.8.5_B: these rows now live in homeSummaryGroups and under Details */
 function remoteLiveHTML(){
   try{
     const r=JSON.parse(localStorage.getItem('farrq.remoteLive')||'null');
     if(!r||!(r.at>0))return '';
-    const when=new Date(r.at).toLocaleString('en-ZA');
-    return `<div class="card"><div class="hdr-row"><div class="label">EV meter · copied from the Sheet</div><div class="small">${esc(ago(r.at))}</div></div>`+
-      R('Last copied',esc(when))+
-      R('Charging then',r.charging?'yes':'no')+
-      (r.charging?R('Power then',n2(r.watts,0)+' W'):'')+
-      R('Day total then',n2(r.today,2)+' kWh · R'+n2((+r.today||0)*rate(),2))+
-      R('Month total then',n2(r.month,2)+' kWh · R'+n2((+r.month||0)*rate(),2))+
-      remoteExtraRows(r)+
+    const old=(Date.now()-r.at)>45*60000;
+    return `<div class="card"><div class="hdr-row"><div class="label">Copy from the Sheet</div><div class="small">${esc(ago(r.at))}</div></div>`+
+      `<div class="small" style="margin:4px 0 6px">${old?'This copy is old. ':''}Everything here is as it was on ${esc(shDT(r.at))}.</div>`+
       (function(){try{return homeSummaryGroups(r);}catch(e){return '';}})()+
       `<div style="margin-top:10px"><button class="btn ghost" id="rmRefreshBtn" onclick="farrRefreshBlock()">Refresh latest data</button></div>`+
       `</div>`;
@@ -565,56 +567,60 @@ function shTag(v){
   return `<span class="tag" style="color:${t[1]};border-color:${t[1]}">${t[0]}</span>`+(v.by?` <span class="small">${esc(v.by)}</span>`:'');
 }
 function shHead(t,sub){return `<div class="label" style="margin:16px 0 4px;padding-top:10px;border-top:2px solid var(--line,#8884)">${esc(t)}</div>`+(sub?`<div class="small" style="margin:0 0 4px">${esc(sub)}</div>`:'');}
+let shOpen=false;
+window.farrShOpen=function(o){shOpen=!!o;};
 function shellyHTML(){
   const c=shCalc(), a=c.anchor;
   let live=null;try{live=JSON.parse(localStorage.getItem('farrq.remoteLive')||'null');}catch(e){}
   const lastEn=c.all.length?c.all[c.all.length-1].en:0;
   const head=live&&live.charging&&live.at>lastEn?'charging now':(lastEn?'last charge ended '+ago(lastEn):'');
-  let h=`<div class="card"><div class="hdr-row"><div class="label">Shelly meter · true data</div><div class="small">${esc(head)}</div></div>`+
-    `<div class="small" style="margin:4px 0 6px">Everything here comes from the Shelly's measured charges, copied from the Sheet, and the readings in the log.</div>`;
-  /* 1 last real odometer */
-  h+=shHead('1 · Last real odometer');
+  let h=`<div class="card"><div class="hdr-row"><div class="label">Details</div><div class="small">${esc(head)}</div></div>`+
+    `<details id="shDet"${shOpen?' open':''} ontoggle="farrShOpen(this.open)"><summary style="cursor:pointer;padding:10px 0;font-weight:600">Tap to open: odometer, every charge, checks</summary>`+
+    `<div class="small" style="margin:4px 0 6px">Everything here comes from the Shelly's measured charges and the readings in the log.</div>`;
+  /* 1 odometer from the car */
+  h+=shHead('Odometer from the car','The km on the car dash, as typed in a log.');
   const lr=c.lastReal&&(a.src!=='typed'||c.lastReal.ts>=a.at)?c.lastReal:null;
-  if(lr){h+=R('Odometer',n2(lr.odo,0)+' km')+R('Read at',esc(shDT(lr.ts))+(lr.who?' · '+esc(lr.who):''));}
-  else if(a.src==='typed'){h+=R('Odometer',n2(a.odo,0)+' km')+R('Read at',esc(shDT(a.at))+' · typed in the box below');}
-  else{h+=R('Odometer',n2(SH_SEED.odo,0)+' km')+R('Read at',esc(shDT(SH_SEED.at))+' · start value');}
+  if(lr){h+=R('Odometer',n2(lr.odo,0)+' km')+R('Read on',esc(shDT(lr.ts))+(lr.who?' · '+esc(lr.who):''));}
+  else if(a.src==='typed'){h+=R('Odometer',n2(a.odo,0)+' km')+R('Read on',esc(shDT(a.at))+' · typed in the box below');}
+  else{h+=R('Odometer',n2(SH_SEED.odo,0)+' km')+R('Read on',esc(shDT(SH_SEED.at))+' · start value');}
   /* 2 odometer worked out */
-  h+=shHead('2 · Odometer worked out','From the last full charge with a real odometer, plus the kWh charged since. No charging-loss figure is used.');
+  h+=shHead('Odometer worked out','The app counts the km from the kWh charged since a full charge. It starts from a real odometer.');
   h+=R(c.firm?'Odometer (worked out)':'Odometer (at least)',n2(c.odo,0)+' km');
-  h+=R('Efficiency used',n2(c.eff.v,1)+' kWh at the wall per 100 km');
+  h+=R('Power per 100 km used for this',n2(c.eff.v,1)+' kWh');
   h+=`<div class="small" style="margin:0 0 4px">Why: ${esc(c.eff.why)}.</div>`;
   h+=R('Counting from',n2(c.base.odo,0)+' km · '+esc(shDT(c.base.at))+(c.base.how==='full'?' · full charge':c.base.how==='typed'?' · typed by you':' · start value'));
   /* 3 since last full */
-  h+=shHead('3 · Since the last full charge','Charges that did not end full only add to the kWh. The car has been driven at least this far.');
-  h+=R('Charges since',String(c.poolN));
-  h+=R('kWh charged since',n2(c.pool,2)+' kWh · '+hmRand(c.pool*rate()));
+  h+=shHead('Since the last full charge','Charges that did not end full only add kWh. The car has driven at least this far.');
+  h+=R('Charges',String(c.poolN));
+  h+=R('kWh charged',n2(c.pool,2)+' kWh · '+hmRand(c.pool*rate()));
   h+=R('Driven at least',n2(c.minKm,0)+' km');
   /* 4 full charges */
-  h+=shHead('4 · Full charges','Newest first. Worked out km against the real odometer, where one was read.');
+  h+=shHead('Full charges','Newest first. The app\'s km guess next to the real odometer.');
   const f=c.fulls.slice().reverse();
-  h+=f.length?f.slice(0,8).map(x=>`<div class="row"><div>${esc(shRange(x.st,x.en))}<div class="small">${n2(x.pool,2)} kWh in ${x.poolN} charge${x.poolN>1?'s':''} · +${n2(x.km,0)} km</div></div><div style="text-align:right"><b>${n2(x.odo,0)} km</b><div class="small">${x.real!=null?'real '+n2(x.real,0)+' km ('+(Math.round(x.odo-x.real)>0?'+':'')+Math.round(x.odo-x.real)+')':'no real reading'}</div></div></div>`).join(''):'<div class="small">None yet.</div>';
+  h+=f.length?f.slice(0,8).map(x=>{const d=x.real!=null?Math.round(x.odo-x.real):0;return `<div class="row"><div>${esc(shRange(x.st,x.en))}<div class="small">${n2(x.pool,2)} kWh in ${x.poolN} charge${x.poolN>1?'s':''} · ${n2(x.km,0)} km driven</div></div><div style="text-align:right"><b>${n2(x.odo,0)} km</b><div class="small">${x.real!=null?'real '+n2(x.real,0)+' km · '+(d===0?'spot on':'guess '+Math.abs(d)+' km too '+(d>0?'high':'low')):'no real reading to check'}</div></div></div>`;}).join(''):'<div class="small">None yet.</div>';
   /* 5 last sessions */
-  h+=shHead('5 · Latest Shelly charges','Start, end, kWh, cost, what happened at the end and how that is known.');
+  h+=shHead('Latest charges','Start, end, kWh, cost and how it ended.');
   const L=c.all.slice().reverse().slice(0,12);
   h+=L.length?L.map(x=>`<div class="row"><div>${esc(shRange(x.st,x.en))}<div class="small">${hmDur(Math.round((x.en-x.st)/60000))} · peak ${n2(x.peak,0)} W</div><div style="margin-top:3px">${shTag(x.v)}</div></div><div style="text-align:right"><b>${n2(x.kwh,2)} kWh</b><div class="small">${hmRand(x.cost)}</div></div></div>`).join(''):'<div class="small">No Shelly charges on this phone yet.</div>';
   /* 6 totals */
   const now=new Date(), from=new Date(now.getFullYear(),now.getMonth(),1).getTime(), wk=Date.now()-7*864e5;
   const tot=(cut)=>{const r={n:0,kwh:0,cost:0,full:0,nf:0,un:0};c.all.filter(x=>x.en>=cut&&x.v.k!=='short').forEach(x=>{r.n++;r.kwh+=x.kwh;r.cost+=x.cost;if(x.v.k==='full')r.full++;else if(x.v.k==='not_full')r.nf++;else r.un++;});return r;};
   const t7=tot(wk), tm=tot(from);
-  h+=shHead('6 · Totals','Finished charges only. Charges under 0.1 kWh are left out.');
+  h+=shHead('Totals','Finished charges only. Charges under 0.1 kWh are left out.');
   [['Last 7 days',t7],['This month',tm]].forEach(([n,t])=>{
     h+=R(n,n2(t.kwh,2)+' kWh · '+hmRand(t.cost));
     h+=`<div class="small" style="margin:0 0 4px">${t.n} charges: ${t.full} full · ${t.nf} not completed · ${t.un} not sure</div>`;
   });
   /* 7 odometer check */
-  h+=shHead('7 · Odometer check','Type the real odometer when you know it. Best right after a full charge, with no driving since.');
-  h+=`<div style="display:flex;gap:8px;align-items:center;margin:6px 0"><input id="shOdo" type="number" inputmode="decimal" placeholder="Odometer in km" style="flex:1 1 auto;width:auto;min-width:0"><button class="btn" style="flex:0 0 auto;width:auto;padding:10px 16px;margin:0" onclick="farrShellySet()">Use this</button></div>`;
-  h+=`<div class="small">${a.src==='typed'?'Last typed here: '+n2(a.odo,0)+' km at '+esc(shDT(a.at))+'.':'Nothing typed here yet. The readings in the log are used.'}</div>`;
+  h+=shHead('Check the odometer','Type the km on the car dash. The app checks its guess. Best right after a full charge, before driving.');
+  h+=`<div style="display:flex;gap:8px;align-items:center;margin:6px 0"><input id="shOdo" type="number" inputmode="decimal" placeholder="Odometer in km" style="flex:1 1 auto;width:auto;min-width:0"><button class="btn" style="flex:0 0 auto;width:auto;padding:10px 16px;margin:0" onclick="farrShellySet()">Save</button></div>`;
+  h+=`<div class="small">${a.src==='typed'?'You typed '+n2(a.odo,0)+' km on '+esc(shDT(a.at))+'.'+(c.lastReal&&c.lastReal.ts>a.at?' The log has a newer reading, so that one is used.':''):'Nothing typed yet. The readings in the log are used.'}</div>`;
   if(a.src==='typed')h+=`<div style="margin-top:6px"><button class="btn ghost" onclick="farrShellyReset()">Forget the typed odometer</button></div>`;
+  h+=homeMoreRows();
   /* 8 rules */
-  h+=shHead('How to read this');
-  h+=`<div class="small">Full: the car stopped by itself. The small text says how that is known.<br>Not completed: it was stopped early, or it went on charging soon after.<br>Not sure: it has only just ended.<br>Km = kWh at the wall divided by wall kWh per 100 km.<br>The odometer is firm at a full charge. In between it shows at least.</div>`;
-  return h+`</div>`;
+  h+=shHead('What the words mean');
+  h+=`<div class="small">Full: the car stopped charging by itself. The small text says how we know.<br>Not completed: the charge was stopped early, or the car went on charging soon after.<br>Not sure: the charge has only just ended.<br>Km = kWh from the wall, divided by kWh per 100 km.<br>The odometer is exact right at a full charge. In between it says "at least".</div>`;
+  return h+`</details></div>`;
 }
 let shLast='';
 function paintShelly(force){

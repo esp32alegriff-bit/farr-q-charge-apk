@@ -23,7 +23,7 @@ const {chromium}=require(process.env.PW_MODULE||'playwright');
  const km=await pg.evaluate(()=>window.farrKmSinceCharge&&window.farrKmSinceCharge());
  ok(km&&km.km===0,'km since last charge = 0 ('+JSON.stringify(km)+')');
  const html=await pg.evaluate(()=>window.farrRemoteBlockHTML().replace(/<[^>]*>/g,' ').replace(/\s+/g,' '));
- ok(/Km since last charge 0 km/.test(html),'row shown in the EV meter block');
+ ok(/Km driven since the last charge 0 km/.test(html),'row shown in the EV meter block');
  await pg.evaluate(()=>go('graph'));await pg.waitForTimeout(500);
  ok(await pg.evaluate(()=>!!document.getElementById('gAcc')),'accuracy card exists on Graphs');
  ok(await pg.evaluate(()=>document.querySelectorAll('#gAcc .accDot').length)>0,'dots drawn');

@@ -60,8 +60,8 @@ const {chromium}=require(process.env.PW_MODULE||'playwright');
  ok(c.fulls.length===4&&c.fulls[0].real===2041&&c.fulls[2].real===2091&&c.fulls[1].real==null,'full charges carry the real odometer where one was read');
  ok(Math.abs(c.fulls[0].odo-(1981+13.0/eff*100))<0.01,'worked out at the first full: '+c.fulls[0].odo.toFixed(1)+' against the real 2041');
  ok(Math.abs(c.odo-(2091+13.5/eff*100))<0.01&&c.firm&&c.pool===0,'odometer now: last real full (2091) plus 13.5 kWh, firm: '+c.odo.toFixed(1));
- const t=await pg.evaluate(()=>document.getElementById('shellyCard').innerText.replace(/\s+/g,' '));
- for(const x of ['Shelly meter · true data','charging now','1 · Last real odometer','2 · Odometer worked out','kWh at the wall per 100 km','3 · Since the last full charge','Driven at least','4 · Full charges','real 2041 km','5 · Latest Shelly charges','Full (100%)','Not completed','6 · Totals','7 · Odometer check','How to read this'])
+ const t=await pg.evaluate(()=>document.getElementById('shellyCard').textContent.replace(/\s+/g,' '));
+ for(const x of ['Details','charging now','Odometer from the car','Odometer worked out','Power per 100 km used for this','Since the last full charge','Driven at least','Full charges','real 2041 km','Latest charges','Full (100%)','Not completed','Totals','Check the odometer','What the words mean','Other numbers','Battery % typed in last'])
    ok(t.toLowerCase().includes(x.toLowerCase()),'shown: '+x);
  ok(!/Loss 10%|Loss 13\.3%|12\.8 kWh/.test(t),'no loss figures and no 12.8 in the block');
  ok(/10 charges|9 charges/.test(t)&&/0 not sure/.test(t),'totals have no "not sure" left');
@@ -69,8 +69,10 @@ const {chromium}=require(process.env.PW_MODULE||'playwright');
  const m=await pg.evaluate(()=>document.getElementById('meterCard').innerText.replace(/\s+/g,' '));
  ok(/Away from home/.test(m)&&!/Meter not found yet/.test(m),'away from home is not "meter not found"');
  ok(/Charging for 1 h 30 min/.test(m)&&/Started at 10:28/.test(m),'running charge: real start time from the Sheet, whole minutes');
- ok(/kWh per 100 km \(at the wall, Shelly\) 20\.5/.test(m)&&/Cost per km \(at the wall\) R0\.80/.test(m),'wall kWh per 100 km and cost per km on Home');
- ok(/estimated from battery % 0\.00 kWh/.test(m),'nothing estimated from battery %: the charge typed while charging is not counted twice');
+ ok(/Power bought per 100 km \(wall\) 20\.5 kWh/.test(m)&&/Cost per km \(wall\) R0\.80/.test(m),'wall kWh per 100 km and cost per km on Home');
+ ok(!/\bthen\b/i.test(m)&&!/Odometer/.test(m),'Home says no "then" and keeps the odometer under Details');
+ ok(await pg.evaluate(()=>{const d=document.getElementById('shDet');return d&&!d.open;}),'Details is closed until you open it');
+ ok(!/Guessed from battery/.test(m),'nothing estimated from battery %: the charge typed while charging is not counted twice');
  // the log: no double count, and the trip after an unlogged full charge starts at 100%
  const d=await pg.evaluate(()=>{const r=derive();const ch=r.filter(x=>x.type==='charge'&&!x.auto);const tr=r.filter(x=>x.type==='trip');
    return {w:ch.map(x=>+x.wall.toFixed(2)),m:ch.map(x=>x.measured),t:tr.map(x=>({km:x.km,used:+x.used.toFixed(2),eff:x.countEff,h:+x.hours.toFixed(1)}))};});
@@ -78,6 +80,7 @@ const {chromium}=require(process.env.PW_MODULE||'playwright');
  ok(d.t[1].km===50&&Math.abs(d.t[1].used-8.54)<0.01&&d.t[1].eff&&d.t[1].h===28.9,'trip after an unlogged full charge starts at 100% from its end: '+JSON.stringify(d.t[1]));
  ok(await pg.evaluate(()=>{const s={end_ms:new Date(2026,10,10,9,0,0).getTime()};return window.farrVerdict(s)==='full';}),'farrVerdict gives the same verdict to the Learning page');
  // odometer check box
+ await pg.evaluate(()=>{document.getElementById('shDet').open=true;});await pg.waitForTimeout(100);
  await pg.fill('#shOdo','2300');await pg.click('#shellyCard button.btn:not(.ghost)');await pg.waitForTimeout(200);
  const c2=await pg.evaluate(()=>{const r=window.farrShelly.calc();return {base:r.base,odo:r.odo,st:JSON.parse(localStorage.getItem('farrq.shelly'))};});
  ok(c2.base.how==='typed'&&c2.odo===2300&&c2.st.src==='typed'&&c2.st.odo===2300,'typed odometer becomes the new counting point, stored in the same form as 2.2.8.5');
